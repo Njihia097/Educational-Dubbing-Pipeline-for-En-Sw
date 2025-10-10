@@ -1,0 +1,7 @@
+{
+  "name": "edu-dubbing-ui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "start": "vite", "build": "vite build", "dev": "vite" },
+  "dependencies": {}
+}
