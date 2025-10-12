@@ -16,10 +16,27 @@ load_dotenv()
 # access to the values within the .ini file in use.
 config = context.config
 
+config_file = config.config_file_name
+if config_file and os.path.exists(config_file):
+    fileConfig(config_file)
+else:
+    alt = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+    if os.path.exists(alt):
+        fileConfig(alt)
+    # else: proceed without logging config
+
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# if config.config_file_name is not None:
+#     fileConfig(config.config_file_name)
+
+# Force Alembic to use the correct config file location
+# config_path = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
+# config_path = os.path.abspath(config_path)
+# if os.path.exists(config_path):
+#     fileConfig(config_path)
+# else:
+#     print(f"⚠️ Alembic config not found at {config_path}, skipping fileConfig()")
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -66,8 +83,11 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = os.getenv("DATABASE_URL")
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

@@ -1,1 +1,11 @@
-*.env # ignore environment variable files
+# ignore environment variable files
+*.env 
+backend/.env
+frontend/.env
+
+# ignore data directories
+backend/storage_data/
+postgres_data/
+redis_data/
+storage_data/
+data/
