@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini /app/alembic.ini
 COPY . .
 
+RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
+USER appuser
+
+
 # Ensure entrypoint is executable
 RUN chmod +x /app/entrypoint.sh
 

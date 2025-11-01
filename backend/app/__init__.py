@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, app
 from flask_sqlalchemy import SQLAlchemy
 from app.config import Config
 from app.database import db
@@ -24,5 +24,12 @@ def create_app():
 
     from app.routes import api_bp
     app.register_blueprint(api_bp, url_prefix="/api")
+
+    from app.routes.job_routes import job_bp
+    app.register_blueprint(job_bp, url_prefix="/api/jobs")
+
+    from app.routes import test_bp
+    app.register_blueprint(test_bp)
+
 
     return app

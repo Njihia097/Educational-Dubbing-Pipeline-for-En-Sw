@@ -2,6 +2,7 @@ import os
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from app.storage import storage
+from app.tasks import test_task
 
 # This blueprint is mounted under the API blueprint at /api
 storage_bp = Blueprint("storage", __name__, url_prefix="/storage")
@@ -49,3 +50,12 @@ def delete_file(key):
         return jsonify({"message": f"Deleted {key} successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+test_bp = Blueprint("test_bp", __name__)
+
+@test_bp.route("/api/test_task", methods=["POST"])
+def trigger_test_task():
+    """Endpoint to trigger background test task."""
+    task = test_task.delay(5)
+    return jsonify({"task_id": task.id}), 202

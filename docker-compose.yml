@@ -55,6 +55,8 @@ services:
     build: ./backend
     container_name: edu_backend
     restart: always
+    environment:
+      - ROLE=backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +70,22 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
+
+  worker:
+    build: ./backend
+    container_name: edu_worker
+    restart: always
+    environment:
+      - ROLE=worker
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - backend
+      - redis
+    volumes:
+      - ./backend:/app
+
+
 
 volumes:
   postgres_data:
