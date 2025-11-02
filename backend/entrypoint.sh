@@ -4,7 +4,8 @@ set -e
 ROLE=${ROLE:-backend}  # default to backend
 
 echo "Waiting for Postgres at $POSTGRES_HOST (timeout 60s)..."
-until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER" > /dev/null 2>&1; do
+command -v pg_isready >/dev/null 2>&1 || { echo "pg_isready not found, skipping check"; }
+until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER" >/dev/null 2>&1; do
   sleep 2
 done
 echo "Postgres check complete."
@@ -20,7 +21,7 @@ flask db upgrade || echo "Migration step skipped or already applied."
 
 if [ "$ROLE" = "worker" ]; then
   echo "Starting Celery worker..."
-  exec celery -A app.celery_app.celery worker --loglevel=info
+  exec celery -A app.celery_app.celery_app worker --loglevel=info
 else
   echo "Starting Flask app..."
   exec python run.py
