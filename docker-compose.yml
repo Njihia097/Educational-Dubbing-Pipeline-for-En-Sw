@@ -18,8 +18,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 12
+      start_period: 5s
 
   minio:
     image: minio/minio
@@ -76,27 +76,26 @@ services:
       - ./storage/outputs:/data/outputs
 
   worker:
-    user: appuser
     build: ./backend
     container_name: edu_worker
     restart: always
     environment:
       - ROLE=worker
-      - PYTHONPATH=/app:/pipeline 
+      - PYTHONPATH=/app:/pipeline
       - CUDA_VISIBLE_DEVICES=0
-      - CELERYD_PREFETCH_MULTIPLIER=1   #prevent the worker from hoarding tasks while one is running.
-      - CELERY_ACKS_LATE=true  
+      - CELERYD_PREFETCH_MULTIPLIER=1
+      - CELERY_ACKS_LATE=true
     env_file:
       - ./backend/.env
     depends_on:
-      - backend
-      - redis
-    command: celery -A app.celery_app:celery_app worker -Q gpu,default --loglevel=info --concurrency=1
-
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
     volumes:
       - ./backend:/app
-      - ../educational_dubbing_pipeline_tr:/pipeline  # <- local model repo
-      - ./storage/uploads:/data/uploads            # user uploads
+      - ../educational_dubbing_pipeline_tr:/pipeline
+      - ./storage/uploads:/data/uploads
       - ./storage/outputs:/data/outputs
     deploy:
       resources:
@@ -104,7 +103,6 @@ services:
           devices:
             - capabilities: ["gpu"]
     gpus: all
-
 
 
 volumes:

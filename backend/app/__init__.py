@@ -1,45 +1,33 @@
-from flask import Flask, app
-from flask_sqlalchemy import SQLAlchemy
-from app.config import Config
-from app.database import db
+# app/__init__.py
+from flask import Flask
 from flask_migrate import Migrate
 
-db = SQLAlchemy()
+# ✅ Use the one-and-only db instance defined in app/database.py
+from app.database import db
 
-
-def create_app():
+def create_app(config_overrides: dict | None = None):
     app = Flask(__name__)
-    app.config.from_object("app.config.Config")
-    db.init_app(app)
 
+    # Load default config, then apply test/override config BEFORE init_app.
+    app.config.from_object("app.config.Config")
+    if config_overrides:
+        app.config.update(config_overrides)
+
+    db.init_app(app)
     Migrate(app, db)
 
-    # Import and register blueprints/routes here if needed
-    # from app.routes.api import api_bp
-    # app.register_blueprint(api_bp)
+    # Blueprints
+    from app.routes import api_bp, test_bp
+    from app.routes.job_routes import job_bp
+    from app.routes.pipeline import pipeline_bp
+
+    app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(job_bp, url_prefix="/api/jobs")
+    app.register_blueprint(test_bp)
+    app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")
 
     @app.route("/health")
     def health():
         return {"status": "ok"}, 200
 
-    from app.routes import api_bp
-    app.register_blueprint(api_bp, url_prefix="/api")
-
-    from app.routes.job_routes import job_bp
-    app.register_blueprint(job_bp, url_prefix="/api/jobs")
-
-    from app.routes import test_bp
-    app.register_blueprint(test_bp)
-
-    from app.routes.pipeline import pipeline_bp
-    app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")
-
-
-
     return app
-
-# Import Celery app here to ensure tasks register when Flask starts
-try:
-    from app.celery_app import celery_app  
-except ImportError as e:
-    print(f"[WARN] Celery app not loaded: {e}")
