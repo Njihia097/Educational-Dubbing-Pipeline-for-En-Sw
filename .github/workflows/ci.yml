@@ -1,0 +1,43 @@
+name: 🧪 CI - Educational Dubbing Pipeline
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧩 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 🐋 Set up Docker Compose
+        run: sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+
+      - name: 🧱 Build and start containers
+        run: |
+          docker compose -f backend/docker-compose.yml up -d --build
+          echo "Waiting for backend to become ready..."
+          for i in {1..30}; do
+            if docker logs edu_backend 2>&1 | grep -q "Starting Flask app"; then
+              echo "Backend is ready!"
+              break
+            fi
+            sleep 5
+          done
+
+      - name: ✅ Run pipeline tests inside container
+        run: |
+          docker exec edu_backend pytest -q tests/test_pipeline.py --disable-warnings --maxfail=1
+
+      - name: 🧹 Clean up
+        if: always()
+        run: docker compose -f backend/docker-compose.yml down -v
