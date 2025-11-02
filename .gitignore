@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ignore environment variable files
 *.env 
 backend/.env
@@ -16,3 +17,29 @@ __pycache__/
 *.pyo
 *.sqlite3
 *.log
+=======
+# ignore environment variable files
+*.env 
+backend/.env
+frontend/.env
+
+# ignore data directories
+backend/storage_data/
+postgres_data/
+redis_data/
+storage_data/
+data/
+
+*.pyc
+*__pycache__/
+*.pyo
+*.sqlite3
+*.log
+
+# backend/app/__pycache__/__init__.cpython-313.pyc
+# backend/app/routes/__pycache__/__init__.cpython-313.pyc
+# backend/app/__pycache__/__init__.cpython-313.pyc
+# backend/app/routes/__pycache__/storage_routes.cpython-313.pyc
+# backend/app/__pycache__/__init__.cpython-313.pyc
+# backend/app/__pycache__/__init__.cpython-313.pyc
+>>>>>>> 35d3a6cfcaf23a17ca376a4a9cda48243205f57a

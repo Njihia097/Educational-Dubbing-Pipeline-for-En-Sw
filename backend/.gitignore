@@ -1,0 +1,26 @@
+# Python
+*__pycache__/
+*../__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+
+# Models, datasets, outputs, caches
+models/
+data/
+outputs/
+logs/
+.checkpoints/
+cache/
+*.pt
+*.bin
+*.safetensors
+
+# Hugging Face / HF cache
+.huggingface/
+huggingface/
+~/.cache/
+**/.cache/
+

@@ -31,5 +31,15 @@ def create_app():
     from app.routes import test_bp
     app.register_blueprint(test_bp)
 
+    from app.routes.pipeline import pipeline_bp
+    app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")
+
+
 
     return app
+
+# Import Celery app here to ensure tasks register when Flask starts
+try:
+    from app.celery_app import celery_app  
+except ImportError as e:
+    print(f"[WARN] Celery app not loaded: {e}")

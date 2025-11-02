@@ -1,7 +1,7 @@
-from app.celery_app import celery
+from app.celery_app import celery_app
 import time
 
-@celery.task(name="tasks.test_task")
+@celery_app.task(name="tasks.test_task")
 def test_task(duration=5):
     """Simulates a background job that takes a few seconds."""
     print(f"🧩 Running test task for {duration} seconds...")
