@@ -4,7 +4,12 @@ from app.celery_app import celery_app
 from app.database import db
 from app.models import Job, JobOutput, Asset
 from app.services.minio_services import MinIOService
-from src.inference.local_pipeline.cli import init_pipeline_for_integration
+
+# Check for SKIP_MODEL_LOAD env to optionally skip model loading (for tests/dev)
+SKIP_MODEL_LOAD = os.getenv("SKIP_MODEL_LOAD", "False").lower() == "true"
+
+if not SKIP_MODEL_LOAD:
+    from src.inference.local_pipeline.cli import init_pipeline_for_integration
 
 # Ensure /pipeline is in sys.path for Docker
 if "/pipeline" not in sys.path:
@@ -14,7 +19,7 @@ if "/pipeline" not in sys.path:
 _pipeline = None
 def get_pipeline():
     global _pipeline
-    if _pipeline is None:
+    if _pipeline is None and not SKIP_MODEL_LOAD:
         _pipeline = init_pipeline_for_integration()
     return _pipeline
 

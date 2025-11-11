@@ -1,6 +1,7 @@
 
 services:
   postgres:
+    profiles: ["dev","prod"]
     image: postgres:16
     container_name: edu_pg
     restart: always
@@ -22,6 +23,7 @@ services:
       start_period: 5s
 
   minio:
+    profiles: ["dev","prod"]
     image: minio/minio
     container_name: edu_minio
     restart: always
@@ -43,6 +45,7 @@ services:
       retries: 3
 
   redis:
+    profiles: ["dev","prod","ci"]
     image: redis:7
     container_name: edu_redis
     restart: always
@@ -55,9 +58,13 @@ services:
     build: ./backend
     container_name: edu_backend
     restart: always
+    profiles: ["dev","prod","ci"]
     environment:
       - ROLE=backend
       - PYTHONPATH=/app:/pipeline 
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - SKIP_MODEL_LOAD=True
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,17 +81,28 @@ services:
       - ../educational_dubbing_pipeline_tr:/pipeline  # <- local model repo
       - ./storage/uploads:/data/uploads            # user uploads
       - ./storage/outputs:/data/outputs
+      # ✅ match non-root cache paths from Dockerfile
+      - hf_cache:/tmp/hf_cache/huggingface
+      - torch_cache:/tmp/hf_cache/torch
+      - nltk_data:/tmp/nltk_data
+      - xdg_cache:/tmp/.cache
+      
 
   worker:
     build: ./backend
     container_name: edu_worker
     restart: always
+    profiles: ["dev","prod"]
     environment:
       - ROLE=worker
       - PYTHONPATH=/app:/pipeline
       - CUDA_VISIBLE_DEVICES=0
       - CELERYD_PREFETCH_MULTIPLIER=1
       - CELERY_ACKS_LATE=true
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      # ⬇️ For dev you can leave True; for real inference set to False
+      - SKIP_MODEL_LOAD=False
     env_file:
       - ./backend/.env
     depends_on:
@@ -97,6 +115,10 @@ services:
       - ../educational_dubbing_pipeline_tr:/pipeline
       - ./storage/uploads:/data/uploads
       - ./storage/outputs:/data/outputs
+      - hf_cache:/tmp/hf_cache/huggingface
+      - torch_cache:/tmp/hf_cache/torch
+      - nltk_data:/tmp/nltk_data
+      - xdg_cache:/tmp/.cache
     deploy:
       resources:
         reservations:
@@ -109,3 +131,8 @@ volumes:
   postgres_data:
   storage_data:
   redis_data:
+  hf_cache:
+  torch_cache:
+  whisper_cache:
+  nltk_data:
+  xdg_cache:
