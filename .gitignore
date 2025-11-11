@@ -43,3 +43,4 @@ data/
 # backend/app/__pycache__/__init__.cpython-313.pyc
 # backend/app/__pycache__/__init__.cpython-313.pyc
 >>>>>>> 35d3a6cfcaf23a17ca376a4a9cda48243205f57a
+storage/uploads/demo.mp4
