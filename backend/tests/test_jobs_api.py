@@ -3,7 +3,7 @@ import uuid
 import pytest
 from app import create_app
 from app.database import db
-from app.models.models import AppUser, Project, Job
+from app.models.models import AppUser, Project, Job, JobStep
 
 @pytest.fixture(scope="module")
 def client():
@@ -75,3 +75,21 @@ def test_get_job_status(client):
 
     assert payload["id"] == str(job.id)
     assert payload["state"] == "queued"
+
+def test_job_persistence(client):
+    client, user, project = client
+
+    dummy_video = io.BytesIO(b"fake content")
+    dummy_video.name = "sample.mp4"
+    data = {"file": (dummy_video, "sample.mp4"),
+            "owner_id": str(user.id),
+            "project_id": str(project.id)}
+
+    res = client.post("/api/jobs/create", data=data, content_type="multipart/form-data")
+    assert res.status_code == 201
+    job_id = res.get_json()["job_id"]
+
+    job = db.session.get(Job, job_id)
+    steps = db.session.query(JobStep).filter_by(job_id=job_id).all()
+    assert job is not None and len(steps) == 4
+
