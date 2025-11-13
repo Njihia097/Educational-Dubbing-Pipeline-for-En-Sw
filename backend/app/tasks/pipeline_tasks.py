@@ -1,5 +1,9 @@
 
 import os, sys, datetime
+from contextlib import contextmanager
+from flask import current_app
+
+from app import create_app
 from app.celery_app import celery_app
 from app.database import db
 from app.models import Job, JobOutput, Asset
@@ -31,56 +35,80 @@ def get_minio_service():
         _minio_service = MinIOService()
     return _minio_service
 
+_worker_app = None
+
+
+@contextmanager
+def _app_context():
+    """Provide an application context for both Flask requests and Celery workers."""
+    global _worker_app
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:
+        app = None
+
+    if app is not None:
+        yield app
+        return
+
+    if _worker_app is None:
+        _worker_app = create_app()
+
+    with _worker_app.app_context():
+        yield _worker_app
+
+
 @celery_app.task(name="pipeline.run_dubbing")
 def run_dubbing(video_path: str, job_id: str):
     """Execute dubbing pipeline and persist outputs."""
-    job = db.session.get(Job, job_id)
-    if not job:
-        return {"status": "error", "error": f"Job {job_id} not found"}
+    with _app_context():
+        job = db.session.get(Job, job_id)
+        if not job:
+            return {"status": "error", "error": f"Job {job_id} not found"}
 
-    try:
-        job.state = "running"
-        job.started_at = datetime.datetime.utcnow()
-        db.session.commit()
+        try:
+            job.state = "running"
+            job.started_at = datetime.datetime.utcnow()
+            db.session.commit()
 
-        pipeline = get_pipeline()
-        result = pipeline.process(video_path, output_name=f"job_{job_id}")
-        output_path = result.get("output_path")
+            pipeline = get_pipeline()
+            result = pipeline.process(video_path, output_name=f"job_{job_id}")
+            output_path = result.get("output_path")
 
-        # Upload dubbed file to MinIO
-        minio_service = get_minio_service()
-        s3_url = minio_service.upload_file(output_path, object_name=f"jobs/{job_id}.mp4")
+            # Upload dubbed file to MinIO
+            minio_service = get_minio_service()
+            s3_url = minio_service.upload_file(output_path, object_name=f"jobs/{job_id}.mp4")
 
-        # Register the output asset
-        asset = Asset(
-            owner_id=job.owner_id,
-            project_id=job.project_id,
-            kind="video",
-            uri=s3_url,
-            meta={"local_path": output_path},
-        )
-        db.session.add(asset)
-        db.session.flush()  # obtain asset.id
+            # Register the output asset
+            asset = Asset(
+                owner_id=job.owner_id,
+                project_id=job.project_id,
+                kind="video",
+                uri=s3_url,
+                meta={"local_path": output_path},
+            )
+            db.session.add(asset)
+            db.session.flush()  # obtain asset.id
 
-        # Log as job output
-        job_output = JobOutput(
-            job_id=job.id,
-            kind="lipsynced_video",
-            asset_id=asset.id,
-            meta={"s3_url": s3_url},
-        )
-        db.session.add(job_output)
+            # Log as job output
+            job_output = JobOutput(
+                job_id=job.id,
+                kind="lipsynced_video",
+                asset_id=asset.id,
+                meta={"s3_url": s3_url},
+            )
+            db.session.add(job_output)
 
-        # Finalize job
-        job.state = "succeeded"
-        job.finished_at = datetime.datetime.utcnow()
-        db.session.commit()
+            # Finalize job
+            job.state = "succeeded"
+            job.finished_at = datetime.datetime.utcnow()
+            db.session.commit()
 
-        return {"status": "success", "job_id": str(job_id), "s3_url": s3_url}
+            return {"status": "success", "job_id": str(job_id), "s3_url": s3_url}
 
-    except Exception as e:
-        db.session.rollback()
-        job.state = "failed"
-        job.error_code = str(e)
-        db.session.commit()
-        return {"status": "error", "job_id": str(job_id), "error": str(e)}
+        except Exception as e:
+            db.session.rollback()
+            job.state = "failed"
+            job.error_code = str(e)
+            db.session.commit()
+            return {"status": "error", "job_id": str(job_id), "error": str(e)}

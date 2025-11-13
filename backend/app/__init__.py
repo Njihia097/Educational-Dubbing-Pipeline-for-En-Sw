@@ -4,6 +4,10 @@ from flask_migrate import Migrate
 
 # ✅ Use the one-and-only db instance defined in app/database.py
 from app.database import db
+from app.celery_app import celery_app  # re-export for modules using `from app import celery_app`
+
+__all__ = ["create_app", "celery_app"]
+
 
 def create_app(config_overrides: dict | None = None):
     app = Flask(__name__)
@@ -12,6 +16,15 @@ def create_app(config_overrides: dict | None = None):
     app.config.from_object("app.config.Config")
     if config_overrides:
         app.config.update(config_overrides)
+
+    app.config.setdefault(
+        "SQLALCHEMY_ENGINE_OPTIONS",
+        {
+            "pool_pre_ping": True,
+            "pool_recycle": 180,
+            "connect_args": {"connect_timeout": 3},
+        },
+    )
 
     db.init_app(app)
     Migrate(app, db)
