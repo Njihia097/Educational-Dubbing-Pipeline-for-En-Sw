@@ -57,7 +57,7 @@ COPY alembic.ini /app/alembic.ini
 COPY entrypoint.sh /app/entrypoint.sh
 COPY . .
 
-RUN chmod x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # ─────────────────────────────────────────────────────────────
 # 8️⃣ Create non-root user for safer runtime

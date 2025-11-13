@@ -3,7 +3,6 @@ from unittest.mock import patch
 from app import create_app
 from app.database import db
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
 from pathlib import Path
 from app.models.models import AppUser, Project
 import os
@@ -45,18 +44,16 @@ def session_transaction(app):
     connection = db.engine.connect()
     transaction = connection.begin()
 
-    # Bind a new session
+    from sqlalchemy.orm import sessionmaker
     Session = sessionmaker(bind=connection)
     session = Session()
-    original_session = db.session
-    db.session = session
+    # Do NOT override db.session; use Flask-SQLAlchemy's session
 
     try:
         yield session
     finally:
-        transaction.rollback()
+        db.session.rollback()
         session.close()
-        db.session = original_session
         connection.close()
 
 @pytest.fixture(scope="module")
