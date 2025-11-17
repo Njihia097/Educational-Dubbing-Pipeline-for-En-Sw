@@ -1,114 +1,201 @@
+"""
+Celery tasks aligned with:
+ - LocalDubbingPipeline (core.py)
+ - external_ai/local_ai_server.py
 
-import os, sys, datetime
-from contextlib import contextmanager
-from flask import current_app
+These tasks:
+  - Download video/audio from MinIO (S3-style)
+  - Call external AI microservice endpoints
+  - Work only with returned filesystem paths
+  - Upload final output back to MinIO
+"""
 
-from app import create_app
-from app.celery_app import celery_app
-from app.database import db
-from app.models import Job, JobOutput, Asset
-from app.services.minio_services import MinIOService
+import os
+import tempfile
+from pathlib import Path
 
-# Check for SKIP_MODEL_LOAD env to optionally skip model loading (for tests/dev)
-SKIP_MODEL_LOAD = os.getenv("SKIP_MODEL_LOAD", "False").lower() == "true"
+import requests
+from celery import shared_task
 
-if not SKIP_MODEL_LOAD:
-    from src.inference.local_pipeline.cli import init_pipeline_for_integration
-
-# Ensure /pipeline is in sys.path for Docker
-if "/pipeline" not in sys.path:
-    sys.path.insert(0, "/pipeline")
-
-# Lazy init for pipeline
-_pipeline = None
-def get_pipeline():
-    global _pipeline
-    if _pipeline is None and not SKIP_MODEL_LOAD:
-        _pipeline = init_pipeline_for_integration()
-    return _pipeline
-
-# Lazy init for MinIO service
-_minio_service = None
-def get_minio_service():
-    global _minio_service
-    if _minio_service is None:
-        _minio_service = MinIOService()
-    return _minio_service
-
-_worker_app = None
+# Correct MinIO utilities for your project
+from app.utils.minio_downloader import download_minio_uri
+from app.utils.minio_client import upload_file
+from app.config import config
 
 
-@contextmanager
-def _app_context():
-    """Provide an application context for both Flask requests and Celery workers."""
-    global _worker_app
-    try:
-        app = current_app._get_current_object()
-    except RuntimeError:
-        app = None
-
-    if app is not None:
-        yield app
-        return
-
-    if _worker_app is None:
-        _worker_app = create_app()
-
-    with _worker_app.app_context():
-        yield _worker_app
+EXTERNAL_AI_URL = os.getenv("EXTERNAL_AI_URL", "http://host.docker.internal:7001")
 
 
-@celery_app.task(name="pipeline.run_dubbing")
-def run_dubbing(video_path: str, job_id: str):
-    """Execute dubbing pipeline and persist outputs."""
-    with _app_context():
-        job = db.session.get(Job, job_id)
-        if not job:
-            return {"status": "error", "error": f"Job {job_id} not found"}
+# ============================================================================
+# 1. ASR — video → audio.wav + text + timings
+# ============================================================================
+@shared_task(bind=True)
+def task_asr(self, video_s3_uri: str):
+    """
+    Returns a payload dict that subsequent tasks enrich as the pipeline progresses.
+    """
+    local_video = download_minio_uri(video_s3_uri)
 
-        try:
-            job.state = "running"
-            job.started_at = datetime.datetime.utcnow()
-            db.session.commit()
+    with open(local_video, "rb") as fh:
+        resp = requests.post(
+            f"{EXTERNAL_AI_URL}/asr",
+            files={"video": fh},
+        )
 
-            pipeline = get_pipeline()
-            result = pipeline.process(video_path, output_name=f"job_{job_id}")
-            output_path = result.get("output_path")
+    if resp.status_code != 200:
+        raise Exception(f"ASR failed: {resp.text}")
 
-            # Upload dubbed file to MinIO
-            minio_service = get_minio_service()
-            s3_url = minio_service.upload_file(output_path, object_name=f"jobs/{job_id}.mp4")
+    data = resp.json()
+    return {
+        "video_s3_uri": video_s3_uri,
+        "text": data["text"],
+        "start": data["start"],
+        "end": data["end"],
+        "wav_path": data["wav_path"],  # filesystem path inside external_ai
+    }
 
-            # Register the output asset
-            asset = Asset(
-                owner_id=job.owner_id,
-                project_id=job.project_id,
-                kind="video",
-                uri=s3_url,
-                meta={"local_path": output_path},
-            )
-            db.session.add(asset)
-            db.session.flush()  # obtain asset.id
 
-            # Log as job output
-            job_output = JobOutput(
-                job_id=job.id,
-                kind="lipsynced_video",
-                asset_id=asset.id,
-                meta={"s3_url": s3_url},
-            )
-            db.session.add(job_output)
+# ============================================================================
+# 2. Punctuation — raw text → list of sentences
+# ============================================================================
+@shared_task(bind=True)
+def task_punctuate(self, payload: dict):
+    raw_text = payload.get("text", "")
+    resp = requests.post(
+        f"{EXTERNAL_AI_URL}/punctuate",
+        json={"text": raw_text},
+    )
 
-            # Finalize job
-            job.state = "succeeded"
-            job.finished_at = datetime.datetime.utcnow()
-            db.session.commit()
+    if resp.status_code != 200:
+        raise Exception(f"Punctuation failed: {resp.text}")
 
-            return {"status": "success", "job_id": str(job_id), "s3_url": s3_url}
+    payload["sentences"] = resp.json()["sentences"]
+    return payload
 
-        except Exception as e:
-            db.session.rollback()
-            job.state = "failed"
-            job.error_code = str(e)
-            db.session.commit()
-            return {"status": "error", "job_id": str(job_id), "error": str(e)}
+
+# ============================================================================
+# 3. Translate EN → SW
+# ============================================================================
+@shared_task(bind=True)
+def task_translate(self, payload: dict):
+    sentences = payload.get("sentences", [])
+    resp = requests.post(
+        f"{EXTERNAL_AI_URL}/mt",
+        json={"sentences": sentences},
+    )
+
+    if resp.status_code != 200:
+        raise Exception(f"Translation failed: {resp.text}")
+
+    data = resp.json()
+    payload["sw_sentences"] = data["sw_sentences"]
+    payload["sw_text"] = data["sw_text"]
+    return payload
+
+
+# ============================================================================
+# 4. TTS → Swahili WAV path
+# ============================================================================
+@shared_task(bind=True)
+def task_tts(self, payload: dict):
+    sentences = payload.get("sw_sentences") or []
+    resp = requests.post(
+        f"{EXTERNAL_AI_URL}/tts",
+        json={"sw_sentences": sentences},
+    )
+
+    if resp.status_code != 200:
+        raise Exception(f"TTS failed: {resp.text}")
+
+    payload["tts_path"] = resp.json()["tts_path"]
+    return payload
+
+
+# ============================================================================
+# 5. Separate background music (Demucs)
+# ============================================================================
+@shared_task(bind=True)
+def task_separate_music(self, payload: dict):
+    wav_path = payload.get("wav_path")
+    resp = requests.post(
+        f"{EXTERNAL_AI_URL}/separate_music",
+        json={"wav_path": wav_path},
+    )
+
+    if resp.status_code != 200:
+        raise Exception(f"Music separation failed: {resp.text}")
+
+    payload["music_path"] = resp.json()["music_path"]
+    return payload
+
+
+# ============================================================================
+# 6. Mix music + dubbed voice
+# ============================================================================
+@shared_task(bind=True)
+def task_mix(self, payload: dict):
+    music_path = payload.get("music_path")
+    voice_path = payload.get("tts_path")
+    resp = requests.post(
+        f"{EXTERNAL_AI_URL}/mix",
+        json={"music_path": music_path, "voice_path": voice_path},
+    )
+
+    if resp.status_code != 200:
+        raise Exception(f"Mix failed: {resp.text}")
+
+    payload["mixed_path"] = resp.json()["mixed_path"]
+    return payload
+
+
+# ============================================================================
+# 7. Replace video audio
+# ============================================================================
+@shared_task(bind=True)
+def task_replace_audio(self, payload: dict):
+    video_s3_uri = payload.get("video_s3_uri")
+    mixed_path = payload.get("mixed_path")
+    local_video = download_minio_uri(video_s3_uri)
+
+    with open(local_video, "rb") as fh:
+        resp = requests.post(
+            f"{EXTERNAL_AI_URL}/mux",
+            files={"video": fh},
+            data={"audio_path": mixed_path},
+        )
+
+    if resp.status_code != 200:
+        raise Exception(f"Audio mux failed: {resp.text}")
+
+    output_local = resp.json()["output_video"]
+
+    download_resp = requests.get(
+        f"{EXTERNAL_AI_URL}/files",
+        params={"path": output_local},
+        stream=True,
+    )
+
+    if download_resp.status_code != 200:
+        raise Exception(f"Failed to download muxed video: {download_resp.text}")
+
+    tmp_dir = Path(tempfile.gettempdir()) / "pipeline_outputs"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / Path(output_local).name
+
+    with open(tmp_file, "wb") as fh:
+        for chunk in download_resp.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                fh.write(chunk)
+
+    object_name = os.path.basename(output_local)
+
+    s3_uri = upload_file(
+        bucket=config.S3_BUCKET_OUTPUTS,
+        object_name=object_name,
+        file_path=str(tmp_file),
+    )
+
+    tmp_file.unlink(missing_ok=True)
+
+    payload["output_s3_uri"] = s3_uri
+    return payload

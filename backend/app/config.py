@@ -26,3 +26,12 @@ class Config:
     SECRET_KEY = os.getenv("JWT_SECRET", "dev-key")
     ENV = os.getenv("FLASK_ENV", "production")
     DEBUG = ENV == "development"
+
+    # Object storage (MinIO / S3)
+    S3_BUCKET = os.getenv("S3_BUCKET", "edu-dubbing")
+    S3_BUCKET_UPLOADS = os.getenv("S3_BUCKET_UPLOADS", "uploads")
+    S3_BUCKET_OUTPUTS = os.getenv("S3_BUCKET_OUTPUTS", "outputs")
+
+
+# Instantiate a global config object for legacy imports
+config = Config()

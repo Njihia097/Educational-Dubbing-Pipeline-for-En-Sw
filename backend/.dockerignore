@@ -13,6 +13,10 @@ logs/
 cache/
 .notebooks/
 *.ipynb
+storage_data/
+venv/
+*.pyo
+.pytest_cache/
 
 # Local artifacts
 *.zip

@@ -1,0 +1,16 @@
+transformers==4.57.1
+peft==0.17.1
+accelerate==1.11.0
+sentencepiece==0.2.1
+openai-whisper==20250625
+whisper==1.1.10
+moviepy==2.2.1
+soundfile==0.13.1
+numpy==2.3.4
+minio
+pydub==0.25.1
+demucs==4.0.1
+nltk==3.9.2
+deepmultilingualpunctuation==1.0.1
+huggingface-hub==0.36.0
+requests

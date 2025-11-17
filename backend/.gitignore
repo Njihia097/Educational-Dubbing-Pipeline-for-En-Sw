@@ -8,6 +8,7 @@
 .env
 
 # Models, datasets, outputs, caches
+migrations/
 models/
 data/
 outputs/

@@ -1,7 +1,6 @@
 
 services:
   postgres:
-    profiles: ["dev","prod"]
     image: postgres:16
     container_name: edu_pg
     restart: always
@@ -23,7 +22,6 @@ services:
       start_period: 5s
 
   minio:
-    profiles: ["dev","prod"]
     image: minio/minio
     container_name: edu_minio
     restart: always
@@ -45,7 +43,6 @@ services:
       retries: 3
 
   redis:
-    profiles: ["dev","prod","ci"]
     image: redis:7
     container_name: edu_redis
     restart: always
@@ -58,14 +55,15 @@ services:
     build: ./backend
     container_name: edu_backend
     restart: always
-    profiles: ["dev","prod","ci"]
     environment:
       - ROLE=backend
-      - PYTHONPATH=/app:/pipeline 
+      - PYTHONPATH=/app:/dubbing_pipeline
+      - EXTERNAL_AI_URL=${EXTERNAL_AI_URL:-http://host.docker.internal:7001}
+      - JOB_UPLOAD_TMP=/data/uploads/tmp
       - FLASK_ENV=production
       - FLASK_DEBUG=0
       - SKIP_MODEL_LOAD=True
-            # S3 / MinIO settings
+      # S3 / MinIO settings
       - S3_ENDPOINT=http://minio:9000
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin123
@@ -87,24 +85,21 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
-      - ../educational_dubbing_pipeline_tr:/pipeline  # <- local model repo
       - ./storage/uploads:/data/uploads            # user uploads
       - ./storage/outputs:/data/outputs
+      - ./storage:/storage
       # ✅ match non-root cache paths from Dockerfile
-      - hf_cache:/tmp/hf_cache/huggingface
-      - torch_cache:/tmp/hf_cache/torch
-      - nltk_data:/tmp/nltk_data
-      - xdg_cache:/tmp/.cache
       
 
   worker:
     build: ./backend
     container_name: edu_worker
     restart: always
-    profiles: ["dev","prod"]
     environment:
       - ROLE=worker
-      - PYTHONPATH=/app:/pipeline
+      - PYTHONPATH=/app:/dubbing_pipeline
+      - EXTERNAL_AI_URL=${EXTERNAL_AI_URL:-http://host.docker.internal:7001}
+      - JOB_UPLOAD_TMP=/data/uploads/tmp
       - CUDA_VISIBLE_DEVICES=0
       - CELERYD_PREFETCH_MULTIPLIER=1
       - CELERY_ACKS_LATE=true
@@ -112,7 +107,7 @@ services:
       - FLASK_DEBUG=0
       # ⬇️ For dev you can leave True; for real inference set to False
       - SKIP_MODEL_LOAD=False
-            # S3 / MinIO settings
+      # S3 / MinIO settings
       - S3_ENDPOINT=http://minio:9000
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin123
@@ -130,13 +125,8 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
-      - ../educational_dubbing_pipeline_tr:/pipeline
       - ./storage/uploads:/data/uploads
       - ./storage/outputs:/data/outputs
-      - hf_cache:/tmp/hf_cache/huggingface
-      - torch_cache:/tmp/hf_cache/torch
-      - nltk_data:/tmp/nltk_data
-      - xdg_cache:/tmp/.cache
     deploy:
       resources:
         reservations:
@@ -149,8 +139,3 @@ volumes:
   postgres_data:
   storage_data:
   redis_data:
-  hf_cache:
-  torch_cache:
-  whisper_cache:
-  nltk_data:
-  xdg_cache:

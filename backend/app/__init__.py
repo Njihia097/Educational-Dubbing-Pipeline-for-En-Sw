@@ -4,9 +4,8 @@ from flask_migrate import Migrate
 
 # ✅ Use the one-and-only db instance defined in app/database.py
 from app.database import db
-from app.celery_app import celery_app  # re-export for modules using `from app import celery_app`
 
-__all__ = ["create_app", "celery_app"]
+__all__ = ["create_app"]
 
 
 def create_app(config_overrides: dict | None = None):
@@ -30,13 +29,12 @@ def create_app(config_overrides: dict | None = None):
     Migrate(app, db)
 
     # Blueprints
-    from app.routes import api_bp, test_bp
+    from app.routes import api_bp, storage_bp, pipeline_bp
     from app.routes.job_routes import job_bp
-    from app.routes.pipeline import pipeline_bp
 
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(storage_bp, url_prefix="/api/storage")
     app.register_blueprint(job_bp, url_prefix="/api/jobs")
-    app.register_blueprint(test_bp)
     app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")
 
     @app.route("/health")

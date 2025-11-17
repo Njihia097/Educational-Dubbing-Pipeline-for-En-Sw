@@ -10,17 +10,20 @@ POSTGRES_USER=${POSTGRES_USER:-postgres}
 S3_ENDPOINT=${S3_ENDPOINT:-http://minio:9000}
 
 echo "Waiting for Postgres at $POSTGRES_HOST ..."
-command -v pg_isready >/dev/null 2>&1 || { echo "pg_isready not found, skipping check"; }
-start=$(date +%s)
-until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER" >/dev/null 2>&1; do
-  sleep 2
-  now=$(date +%s); elapsed=$((now-start))
-  if [ "$elapsed" -gt "$TIMEOUT" ]; then
-    echo "ERROR: Postgres wait timed out after ${TIMEOUT}s"
-    exit 1
-  fi
-done
-echo "Postgres check complete."
+if command -v pg_isready >/dev/null 2>&1; then
+  start=$(date +%s)
+  until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER" >/dev/null 2>&1; do
+    sleep 2
+    now=$(date +%s); elapsed=$((now-start))
+    if [ "$elapsed" -gt "$TIMEOUT" ]; then
+      echo "ERROR: Postgres wait timed out after ${TIMEOUT}s"
+      exit 1
+    fi
+  done
+  echo "Postgres check complete."
+else
+  echo "pg_isready not found, skipping check"
+fi
 
 echo "Waiting for MinIO at $S3_ENDPOINT ..."
 start=$(date +%s)

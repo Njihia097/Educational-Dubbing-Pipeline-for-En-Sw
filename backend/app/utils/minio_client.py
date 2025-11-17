@@ -1,6 +1,10 @@
+import logging
 import os
-from minio import Minio
 from datetime import timedelta
+
+from minio import Minio
+
+logger = logging.getLogger(__name__)
 
 
 def get_minio_client() -> Minio:
@@ -26,6 +30,7 @@ def ensure_bucket(bucket_name: str):
     """Create the bucket if it doesn't exist."""
     client = get_minio_client()
     if not client.bucket_exists(bucket_name):
+        logger.info("Creating MinIO bucket %s", bucket_name)
         client.make_bucket(bucket_name)
     return client
 
@@ -33,8 +38,17 @@ def ensure_bucket(bucket_name: str):
 def upload_file(bucket: str, object_name: str, file_path: str) -> str:
     """Upload a file to MinIO and return an S3-style URI."""
     client = ensure_bucket(bucket)
+    logger.info("Uploading %s to bucket %s", object_name, bucket)
     client.fput_object(bucket, object_name, file_path)
     return f"s3://{bucket}/{object_name}"
+
+
+def download_file(bucket: str, object_name: str, file_path: str) -> str:
+    """Download a file from MinIO to the given destination."""
+    client = get_minio_client()
+    logger.info("Downloading %s from bucket %s -> %s", object_name, bucket, file_path)
+    client.fget_object(bucket, object_name, file_path)
+    return file_path
 
 
 def presign_url(bucket: str, object_name: str, expires_in: int = 3600) -> str:
