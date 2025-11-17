@@ -60,6 +60,8 @@ class Job(db.Model):
     error_code = db.Column(Text)
     model_version = db.Column(Text)
     meta = db.Column(JSONB, nullable=False, default=dict)
+    current_step = db.Column(Text)
+    progress = db.Column(db.Float)
     created_at = db.Column(TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
     started_at = db.Column(TIMESTAMP(timezone=True))
     finished_at = db.Column(TIMESTAMP(timezone=True))

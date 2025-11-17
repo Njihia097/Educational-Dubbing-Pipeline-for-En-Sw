@@ -60,12 +60,12 @@ def test_create_job_enqueues_pipeline(app, monkeypatch):
     class DummyTask:
         id = "task-123"
 
-    def fake_send_task(name, args):
-        calls["task"] = (name, tuple(args))
+    def fake_queue(job_id, s3_uri):
+        calls["task"] = (job_id, s3_uri)
         return DummyTask()
 
     monkeypatch.setattr(job_routes, "upload_file", fake_upload)
-    monkeypatch.setattr(job_routes, "celery_app", SimpleNamespace(send_task=fake_send_task))
+    monkeypatch.setattr(job_routes, "queue_dubbing_chain", fake_queue)
 
     data = {
         "file": (io.BytesIO(b"fake video"), "sample.mp4"),
@@ -95,4 +95,5 @@ def test_create_job_enqueues_pipeline(app, monkeypatch):
     assert len(outputs) == 4
 
     assert calls["upload"][0] == bucket_name
-    assert calls["task"][0] == "pipeline.run_dubbing"
+    assert calls["task"][0] == str(job.id)
+    assert calls["task"][1].startswith(f"s3://{bucket_name}/")

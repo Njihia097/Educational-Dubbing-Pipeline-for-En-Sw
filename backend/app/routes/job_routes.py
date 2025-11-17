@@ -9,44 +9,66 @@ from uuid import UUID
 from flask import Blueprint, request, jsonify
 
 from app.database import db
-from app.models.models import Job, JobStep, JobOutput, Asset
+from app.models.models import AppUser, Project, Job, JobStep, JobOutput, Asset
 
-# Lazy import guard to prevent Celery/MinIO blocking during tests
-TESTING = os.getenv("FLASK_ENV") == "testing" or os.getenv("TESTING") == "1"
-if not TESTING:
-    from app.celery_app import celery_app
-    from app.utils.minio_client import upload_file
-else:
-    celery_app = None
-    upload_file = None
+# Lazily load heavy dependencies when needed (avoid circular imports during app init)
+celery_app = None
+upload_file = None
+queue_dubbing_chain = None
+TESTING_ENV = os.getenv("FLASK_ENV") == "testing" or os.getenv("TESTING") == "1"
 
+
+def _ensure_dependencies():
+    global celery_app, upload_file, queue_dubbing_chain
+    if celery_app is None:
+        from app.celery_app import celery_app as _celery
+        celery_app = _celery
+    if upload_file is None:
+        from app.utils.minio_client import upload_file as _upload
+        upload_file = _upload
+    if queue_dubbing_chain is None:
+        from app.tasks.pipeline_chain import queue_dubbing_chain as _queue
+        queue_dubbing_chain = _queue
 job_bp = Blueprint("job_bp", __name__)
 
 
 @job_bp.route("/create", methods=["POST"])
 def create_job():
-    if upload_file is None or celery_app is None:
-        return (
-            jsonify({"error": "Job creation disabled in testing mode"}),
-            503,
-        )
+    if not TESTING_ENV:
+        _ensure_dependencies()
+
+    if upload_file is None or queue_dubbing_chain is None:
+        return jsonify({"error": "Job creation disabled in testing mode"}), 503
 
     file = request.files.get("file")
     owner_id = request.form.get("owner_id")
     project_id = request.form.get("project_id")
 
-    if not file or not owner_id:
-        return jsonify({"error": "Missing file or owner_id"}), 400
+    if not file:
+        return jsonify({"error": "Missing file"}), 400
+
+    try:
+        owner = _resolve_owner(owner_id)
+        project = _resolve_project(project_id, owner.id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     # Save temporarily before MinIO upload
-    tmp_dir = Path(os.getenv("JOB_UPLOAD_TMP", tempfile.gettempdir()))
+    # Use the persistent uploads volume instead of ephemeral /tmp
+    default_tmp_root = "/data/uploads/tmp"
+    tmp_dir = Path(os.getenv("JOB_UPLOAD_TMP", default_tmp_root))
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = tmp_dir / f"{uuid.uuid4()}_{file.filename}"
-    file.save(temp_path)
 
-    # Upload to MinIO
-    bucket = os.getenv("MINIO_BUCKET_UPLOADS", "uploads")
-    object_name = f"{owner_id}/{uuid.uuid4()}_{file.filename}"
+    temp_path = tmp_dir / f"{uuid.uuid4()}_{file.filename}"
+    file.save(str(temp_path))
+
+    if not temp_path.exists():
+        # Defensive sanity check to make failures obvious
+        raise FileNotFoundError(f"Upload temp file was not created: {temp_path}")
+
+    # Upload to MinIO (use S3_* env, but default is still 'uploads')
+    bucket = os.getenv("S3_BUCKET_UPLOADS", os.getenv("MINIO_BUCKET_UPLOADS", "uploads"))
+    object_name = f"{owner.id}/{uuid.uuid4()}_{file.filename}"
     s3_uri = upload_file(bucket, object_name, str(temp_path))
 
     # Remove temp file
@@ -55,19 +77,19 @@ def create_job():
 
     # Create Asset entry for uploaded file
     asset = Asset(
-        owner_id=owner_id,
-        project_id=project_id,
+        owner_id=owner.id,
+        project_id=project.id if project else None,
         kind="video",
         uri=s3_uri,
-        meta={"original_name": file.filename}
+        meta={"original_name": file.filename},
     )
     db.session.add(asset)
     db.session.flush()
 
     # Create Job entry
     job = Job(
-        owner_id=owner_id,
-        project_id=project_id,
+        owner_id=owner.id,
+        project_id=project.id if project else None,
         input_asset_id=asset.id,
         state="queued",
         meta={"pipeline": "local_dubbing"},
@@ -77,7 +99,7 @@ def create_job():
     db.session.flush()
 
     # Create default steps + output placeholders
-    for step in ["asr", "translation", "tts", "lipsync"]:
+    for step in ["asr", "translation", "tts", "lipsync", "finalize"]:
         db.session.add(JobStep(job_id=job.id, name=step, state="pending"))
     for output_kind in ["translated_text", "tts_audio", "lipsynced_video", "subtitle"]:
         db.session.add(JobOutput(job_id=job.id, kind=output_kind, meta={}))
@@ -85,19 +107,75 @@ def create_job():
     db.session.commit()
 
     try:
-        task = celery_app.send_task("pipeline.run_dubbing", args=[str(job.id), s3_uri])
-        return jsonify({
-            "job_id": str(job.id),
-            "task_id": task.id,
-            "message": "Job created successfully",
-            "uri": s3_uri,
-            "state": job.state
-        }), 201
+        task = queue_dubbing_chain(str(job.id), s3_uri)
+        return jsonify(
+            {
+                "job_id": str(job.id),
+                "task_id": task.id,
+                "message": "Job created successfully",
+                "uri": s3_uri,
+                "state": job.state,
+            }
+        ), 201
     except Exception as e:
         job.state = "failed"
         job.error_code = str(e)
         db.session.commit()
         return jsonify({"error": f"Failed to start task: {e}"}), 500
+
+
+def _resolve_owner(owner_id: str | None) -> AppUser:
+    """
+    Accept UUIDs from the client but allow smoke-test shorthand (None or "1")
+    by provisioning a default user if needed.
+    """
+    if not owner_id or owner_id in {"1", "default", "auto"}:
+        user = AppUser.query.first()
+        if user:
+            return user
+        user = AppUser(
+            email="smoke-test@example.com",
+            display_name="Smoke Tester",
+            password_hash="smoke-test",
+        )
+        db.session.add(user)
+        db.session.commit()
+        return user
+
+    try:
+        owner_uuid = UUID(owner_id)
+    except ValueError as exc:
+        raise ValueError("owner_id must be a valid UUID") from exc
+
+    user = db.session.get(AppUser, owner_uuid)
+    if not user:
+        raise ValueError(f"Owner {owner_uuid} not found")
+    return user
+
+
+def _resolve_project(project_id: str | None, owner_uuid) -> Project | None:
+    """
+    Same as _resolve_owner but scoped to the owner's projects.
+    Returns None if the system can operate without a project reference.
+    """
+    if not project_id or project_id in {"1", "default", "auto"}:
+        project = Project.query.filter_by(owner_id=owner_uuid).first()
+        if project:
+            return project
+        project = Project(owner_id=owner_uuid, name="Smoke Test Project")
+        db.session.add(project)
+        db.session.commit()
+        return project
+
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError as exc:
+        raise ValueError("project_id must be a valid UUID") from exc
+
+    project = db.session.get(Project, project_uuid)
+    if not project:
+        raise ValueError(f"Project {project_uuid} not found")
+    return project
 
 
 def _safe_serialize(value):
@@ -144,9 +222,11 @@ def job_status(job_id):
     if getattr(job, "current_step", None) is not None:
         meta["current_step"] = _safe_serialize(job.current_step)
 
+    api_state = "completed" if job.state == "succeeded" else job.state
+
     return jsonify({
         "id": str(job.id),
-        "state": job.state,
+        "state": api_state,
         "current_step": _safe_serialize(getattr(job, "current_step", None)),
         "progress": _safe_serialize(getattr(job, "progress", None)),
         "steps": steps,
@@ -173,4 +253,3 @@ def presign_download():
         return jsonify({"url": url, "expires_in": 3600}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-

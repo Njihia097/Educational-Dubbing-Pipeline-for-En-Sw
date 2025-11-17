@@ -1,0 +1,2 @@
+-r backend/requirements.dev.txt
+-r external_ai/requirements.txt
