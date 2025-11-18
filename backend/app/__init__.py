@@ -31,11 +31,13 @@ def create_app(config_overrides: dict | None = None):
     # Blueprints
     from app.routes import api_bp, storage_bp, pipeline_bp
     from app.routes.job_routes import job_bp
+    from app.routes.auth_routes import auth_bp
 
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(storage_bp, url_prefix="/api/storage")
     app.register_blueprint(job_bp, url_prefix="/api/jobs")
     app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")
+    app.register_blueprint(auth_bp)
 
     @app.route("/health")
     def health():
