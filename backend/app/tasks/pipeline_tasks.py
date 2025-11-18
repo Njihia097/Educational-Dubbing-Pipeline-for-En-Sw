@@ -196,7 +196,17 @@ def task_replace_audio(self, payload: dict):
             if chunk:
                 fh.write(chunk)
 
-    object_name = os.path.basename(output_local)
+    # --- FIX: Normalize path from external_ai ---
+    clean = output_local.replace("\\", "/")            # fix Windows separators
+    clean = clean.replace("outputs/", "")              # remove accidental prefix
+    clean = clean.lstrip("/")                          # ensure no leading slash
+
+    # Expected final structure:
+    # demo_videos/dubbed_<id>.mp4
+    if not clean.startswith("demo_videos/"):
+        clean = "demo_videos/" + clean
+
+    object_name = clean
 
     # Upload to MinIO
     s3_uri = upload_file(
@@ -204,6 +214,7 @@ def task_replace_audio(self, payload: dict):
         object_name=object_name,
         file_path=str(tmp_file),
     )
+
 
     tmp_file.unlink(missing_ok=True)
 

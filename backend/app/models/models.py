@@ -56,12 +56,18 @@ class Job(db.Model):
     owner_id = db.Column(UUID(as_uuid=True), db.ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False)
     project_id = db.Column(UUID(as_uuid=True), db.ForeignKey("project.id"))
     input_asset_id = db.Column(UUID(as_uuid=True), db.ForeignKey("asset.id"))
-    state = db.Column(ENUM("queued", "running", "succeeded", "failed", "cancelled", name="job_status"), nullable=False, default="queued")
+    state = db.Column(
+        ENUM("queued", "running", "succeeded", "failed", "cancelled", name="job_status"),
+        nullable=False,
+        default="queued",
+    )
     error_code = db.Column(Text)
     model_version = db.Column(Text)
     meta = db.Column(JSONB, nullable=False, default=dict)
     current_step = db.Column(Text)
     progress = db.Column(db.Float)
+    retry_count = db.Column(db.Integer, nullable=False, server_default="0", default=0)
+    last_error_message = db.Column(Text)
     created_at = db.Column(TIMESTAMP(timezone=True), nullable=False, server_default=db.func.now())
     started_at = db.Column(TIMESTAMP(timezone=True))
     finished_at = db.Column(TIMESTAMP(timezone=True))
@@ -72,19 +78,23 @@ class Job(db.Model):
         db.UniqueConstraint('input_asset_id', name='unique_job_input'),
     )
 
+
 class JobStep(db.Model):
     __tablename__ = "job_step"
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = db.Column(UUID(as_uuid=True), db.ForeignKey("job.id", ondelete="CASCADE"), nullable=False)
     name = db.Column(Text, nullable=False)
+    # states: pending | running | succeeded | failed | retrying
     state = db.Column(Text, nullable=False, default="pending")
     started_at = db.Column(TIMESTAMP(timezone=True))
     finished_at = db.Column(TIMESTAMP(timezone=True))
     metrics = db.Column(JSONB, nullable=False, default=dict)
+    retry_count = db.Column(db.Integer, nullable=False, server_default="0", default=0)
     log_ref = db.Column(Text)
     __table_args__ = (
         Index("idx_jobstep_job", "job_id"),
     )
+
 
 class JobOutput(db.Model):
     __tablename__ = "job_output"

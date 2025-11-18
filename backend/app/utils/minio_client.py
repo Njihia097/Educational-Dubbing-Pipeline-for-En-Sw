@@ -38,9 +38,22 @@ def ensure_bucket(bucket_name: str):
 def upload_file(bucket: str, object_name: str, file_path: str) -> str:
     """Upload a file to MinIO and return an S3-style URI."""
     client = ensure_bucket(bucket)
-    logger.info("Uploading %s to bucket %s", object_name, bucket)
-    client.fput_object(bucket, object_name, file_path)
+
+    # Detect proper content type
+    from mimetypes import guess_type
+    ctype = guess_type(file_path)[0] or "application/octet-stream"
+
+    logger.info(f"Uploading {object_name} to bucket {bucket} (ctype={ctype})")
+
+    client.fput_object(
+        bucket,
+        object_name,
+        file_path,
+        content_type=ctype
+    )
+
     return f"s3://{bucket}/{object_name}"
+
 
 
 def download_file(bucket: str, object_name: str, file_path: str) -> str:
@@ -51,11 +64,19 @@ def download_file(bucket: str, object_name: str, file_path: str) -> str:
     return file_path
 
 
-def presign_url(bucket: str, object_name: str, expires_in: int = 3600) -> str:
-    """Generate a presigned GET URL for temporary downloads."""
+def presign_url(bucket: str, object_name: str, expires_in: int = 3600, extra_headers=None) -> str:
     client = get_minio_client()
-    return client.presigned_get_object(
+
+    url = client.presigned_get_object(
         bucket,
         object_name,
-        expires=timedelta(seconds=expires_in)
+        expires=timedelta(seconds=expires_in),
+        response_headers=extra_headers or {}
     )
+
+    # ❌ DO NOT rewrite the host, or the signature becomes invalid.
+    return url
+
+
+
+

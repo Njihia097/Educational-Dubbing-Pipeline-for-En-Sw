@@ -5,6 +5,7 @@ import { AuthProvider } from './auth/AuthContext'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import UploadPage from './pages/UploadPage'
+import JobDetail from './pages/JobDetail'
 import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
@@ -12,29 +13,38 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Default route → login */}
           <Route path="/" element={<Navigate to="/login" replace />} />
 
-          {/* Public route */}
           <Route path="/login" element={<Login />} />
 
-          {/* Protected dashboard shell with nested routes */}
           <Route
-            path="/dashboard/*"
+            path="/dashboard"
             element={
               <ProtectedRoute>
                 <Dashboard />
               </ProtectedRoute>
             }
-          >
-            {/* Index: default dashboard home */}
-            <Route index element={<div className="p-6">Welcome to your dashboard.</div>} />
+          />
 
-            {/* Upload subpage */}
-            <Route path="upload" element={<UploadPage />} />
-          </Route>
+          <Route
+            path="/dashboard/upload"
+            element={
+              <ProtectedRoute>
+                <UploadPage />
+              </ProtectedRoute>
+            }
+          />
 
-          {/* Catch-all → login */}
+          {/* 🔹 NEW: Job detail route */}
+          <Route
+            path="/dashboard/job/:jobId"
+            element={
+              <ProtectedRoute>
+                <JobDetail />
+              </ProtectedRoute>
+            }
+          />
+
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>

@@ -9,7 +9,6 @@ export default function useJobStatus(jobId, { pollIntervalMs = 2500 } = {}) {
 
   useEffect(() => {
     if (!jobId) return
-
     let cancelled = false
 
     async function fetchStatus() {
@@ -18,51 +17,62 @@ export default function useJobStatus(jobId, { pollIntervalMs = 2500 } = {}) {
           credentials: 'include',
         })
         const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to fetch job status')
-        }
+        if (!res.ok) throw new Error(data.error || 'Failed to fetch job status')
 
         if (!cancelled) {
           setStatus({
+            id: data.id,
             state: data.state,
+            current_step: data.current_step,
             progress: data.progress ?? data.meta?.progress ?? null,
             steps: data.steps || [],
             meta: data.meta || {},
+            input_s3_uri: data.input_s3_uri,
+            output_s3_uri: data.output_s3_uri,
+            created_at: data.created_at,
+            started_at: data.started_at,
+            finished_at: data.finished_at,
+
+            retry_count: data.retry_count || 0,
+            last_error_message: data.last_error_message || null,
           })
           setError('')
         }
 
-        // Stop polling once job is completed or failed
-        if (data.state === 'completed' || data.state === 'failed' || data.state === 'cancelled') {
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current)
-            intervalRef.current = null
-          }
+        if (['completed', 'succeeded', 'failed', 'cancelled'].includes(data.state)) {
+          clearInterval(intervalRef.current)
         }
       } catch (err) {
-        if (!cancelled) {
-          console.error('Job status fetch error', err)
-          setError(err.message || 'Failed to fetch job status')
-        }
+        if (!cancelled) setError(err.message)
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
 
-    // Initial fetch
     fetchStatus()
-
-    // Set up polling
     intervalRef.current = setInterval(fetchStatus, pollIntervalMs)
 
     return () => {
       cancelled = true
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
+      clearInterval(intervalRef.current)
     }
   }, [jobId, pollIntervalMs])
 
-  return { status, loading, error }
+  return {
+    job: status,
+    status,
+    loading,
+    error,
+    refresh: () => {
+      if (!jobId) return
+      fetch(`/api/jobs/status/${jobId}`, { credentials: 'include' })
+        .then((res) => res.json())
+        .then((data) =>
+          setStatus((prev) => ({
+            ...(prev || {}),
+            ...data,
+          }))
+        )
+    },
+  }
 }
