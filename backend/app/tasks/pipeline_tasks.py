@@ -1,13 +1,12 @@
 """
-Celery tasks aligned with:
- - LocalDubbingPipeline (core.py)
- - external_ai/local_ai_server.py
+Celery tasks aligned with external_ai microservice.
 
-These tasks:
-  - Download video/audio from MinIO (S3-style)
-  - Call external AI microservice endpoints
-  - Work only with returned filesystem paths
-  - Upload final output back to MinIO
+Everything heavy (ASR, MT, TTS, Demucs, Muxing) runs in external_ai.
+This worker:
+  - downloads files from MinIO
+  - calls external_ai endpoints
+  - uploads final outputs
+  - updates JobStep state via progress_tracker
 """
 
 import os
@@ -17,23 +16,22 @@ from pathlib import Path
 import requests
 from celery import shared_task
 
-# Correct MinIO utilities for your project
 from app.utils.minio_downloader import download_minio_uri
 from app.utils.minio_client import upload_file
 from app.config import config
+from app.tasks.progress_tracker import pipeline_step
 
 
 EXTERNAL_AI_URL = os.getenv("EXTERNAL_AI_URL", "http://host.docker.internal:7001")
 
 
 # ============================================================================
-# 1. ASR — video → audio.wav + text + timings
+# 1. ASR — video → audio.wav + raw text
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("asr")
 def task_asr(self, video_s3_uri: str):
-    """
-    Returns a payload dict that subsequent tasks enrich as the pipeline progresses.
-    """
+
     local_video = download_minio_uri(video_s3_uri)
 
     with open(local_video, "rb") as fh:
@@ -51,19 +49,20 @@ def task_asr(self, video_s3_uri: str):
         "text": data["text"],
         "start": data["start"],
         "end": data["end"],
-        "wav_path": data["wav_path"],  # filesystem path inside external_ai
+        "wav_path": data["wav_path"],
     }
 
 
 # ============================================================================
-# 2. Punctuation — raw text → list of sentences
+# 2. Punctuation
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("punctuate")
 def task_punctuate(self, payload: dict):
-    raw_text = payload.get("text", "")
+
     resp = requests.post(
         f"{EXTERNAL_AI_URL}/punctuate",
-        json={"text": raw_text},
+        json={"text": payload.get("text", "")},
     )
 
     if resp.status_code != 200:
@@ -77,11 +76,12 @@ def task_punctuate(self, payload: dict):
 # 3. Translate EN → SW
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("translate")
 def task_translate(self, payload: dict):
-    sentences = payload.get("sentences", [])
+
     resp = requests.post(
         f"{EXTERNAL_AI_URL}/mt",
-        json={"sentences": sentences},
+        json={"sentences": payload.get("sentences", [])},
     )
 
     if resp.status_code != 200:
@@ -94,14 +94,15 @@ def task_translate(self, payload: dict):
 
 
 # ============================================================================
-# 4. TTS → Swahili WAV path
+# 4. TTS — SW sentences → generated WAV path
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("tts")
 def task_tts(self, payload: dict):
-    sentences = payload.get("sw_sentences") or []
+
     resp = requests.post(
         f"{EXTERNAL_AI_URL}/tts",
-        json={"sw_sentences": sentences},
+        json={"sw_sentences": payload.get("sw_sentences", [])},
     )
 
     if resp.status_code != 200:
@@ -112,14 +113,15 @@ def task_tts(self, payload: dict):
 
 
 # ============================================================================
-# 5. Separate background music (Demucs)
+# 5. Separate background music
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("separate_music")
 def task_separate_music(self, payload: dict):
-    wav_path = payload.get("wav_path")
+
     resp = requests.post(
         f"{EXTERNAL_AI_URL}/separate_music",
-        json={"wav_path": wav_path},
+        json={"wav_path": payload.get("wav_path")},
     )
 
     if resp.status_code != 200:
@@ -130,15 +132,18 @@ def task_separate_music(self, payload: dict):
 
 
 # ============================================================================
-# 6. Mix music + dubbed voice
+# 6. Mix: (dubbed voice + background music)
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("mix")
 def task_mix(self, payload: dict):
-    music_path = payload.get("music_path")
-    voice_path = payload.get("tts_path")
+
     resp = requests.post(
         f"{EXTERNAL_AI_URL}/mix",
-        json={"music_path": music_path, "voice_path": voice_path},
+        json={
+            "music_path": payload.get("music_path"),
+            "voice_path": payload.get("tts_path"),
+        },
     )
 
     if resp.status_code != 200:
@@ -149,12 +154,15 @@ def task_mix(self, payload: dict):
 
 
 # ============================================================================
-# 7. Replace video audio
+# 7. Replace original video audio with new mixed track
 # ============================================================================
 @shared_task(bind=True)
+@pipeline_step("replace_audio")
 def task_replace_audio(self, payload: dict):
+
     video_s3_uri = payload.get("video_s3_uri")
     mixed_path = payload.get("mixed_path")
+
     local_video = download_minio_uri(video_s3_uri)
 
     with open(local_video, "rb") as fh:
@@ -169,6 +177,7 @@ def task_replace_audio(self, payload: dict):
 
     output_local = resp.json()["output_video"]
 
+    # Download muxed final file
     download_resp = requests.get(
         f"{EXTERNAL_AI_URL}/files",
         params={"path": output_local},
@@ -183,12 +192,13 @@ def task_replace_audio(self, payload: dict):
     tmp_file = tmp_dir / Path(output_local).name
 
     with open(tmp_file, "wb") as fh:
-        for chunk in download_resp.iter_content(chunk_size=1024 * 1024):
+        for chunk in download_resp.iter_content(1024 * 1024):
             if chunk:
                 fh.write(chunk)
 
     object_name = os.path.basename(output_local)
 
+    # Upload to MinIO
     s3_uri = upload_file(
         bucket=config.S3_BUCKET_OUTPUTS,
         object_name=object_name,

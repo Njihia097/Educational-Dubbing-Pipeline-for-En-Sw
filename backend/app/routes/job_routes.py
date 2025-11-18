@@ -99,8 +99,18 @@ def create_job():
     db.session.flush()
 
     # Create default steps + output placeholders
-    for step in ["asr", "translation", "tts", "lipsync", "finalize"]:
+    # MUST match pipeline_chain & pipeline_task decorators
+    for step in [
+        "asr",
+        "punctuate",
+        "translate",
+        "tts",
+        "separate_music",
+        "mix",
+        "replace_audio"
+    ]:
         db.session.add(JobStep(job_id=job.id, name=step, state="pending"))
+
     for output_kind in ["translated_text", "tts_audio", "lipsynced_video", "subtitle"]:
         db.session.add(JobOutput(job_id=job.id, kind=output_kind, meta={}))
 

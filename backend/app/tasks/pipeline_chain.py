@@ -8,18 +8,19 @@ This orchestrates:
   2) punctuation
   3) MT
   4) TTS
-  5) music separation + mixing
-  6) final muxing
-  7) output upload
+  5) music separation
+  6) mix audio
+  7) replace video audio
+  8) finalize
 
-All heavy ML work is done outside Docker via external_ai microservice.
+All heavy ML work is done in external_ai microservice.
 """
 
 import datetime
-
 from celery import shared_task, chain
 from app.database import db
-from app.models import Job
+from app.models.models import Job, JobStep
+from app.tasks.progress_tracker import set_step_success
 
 from .pipeline_tasks import (
     task_asr,
@@ -45,12 +46,36 @@ def run_chain(self, job_id: str, video_s3_uri: str):
     if not job:
         raise Exception(f"Job {job_id} not found")
 
+    # Mark job running
     job.state = "running"
+    job.started_at = datetime.datetime.utcnow()
     db.session.commit()
 
+    # ----------------------------------------------------------------------
+    # Create JobStep entries that EXACTLY match the decorator names
+    # ----------------------------------------------------------------------
+    pipeline_steps = [
+        "asr",
+        "punctuate",
+        "translate",
+        "tts",
+        "separate_music",
+        "mix",
+        "replace_audio",
+    ]
+
+    # Ensure steps exist only once
+    existing = {s.name for s in JobStep.query.filter_by(job_id=job_id).all()}
+    for step in pipeline_steps:
+        if step not in existing:
+            db.session.add(JobStep(job_id=job_id, name=step, state="pending"))
+    db.session.commit()
+
+    # ----------------------------------------------------------------------
     # Chain definition
+    # ----------------------------------------------------------------------
     workflow = chain(
-        task_asr.s(video_s3_uri),    # payload includes wav + video info
+        task_asr.s(video_s3_uri),
         task_punctuate.s(),
         task_translate.s(),
         task_tts.s(),
@@ -66,8 +91,7 @@ def run_chain(self, job_id: str, video_s3_uri: str):
 
 def queue_dubbing_chain(job_id: str, video_s3_uri: str):
     """
-    Convenience wrapper used by Flask routes to enqueue the pipeline chain.
-    Returns the AsyncResult so callers can grab the Celery task ID.
+    Called by Flask route /jobs/create.
     """
     from app.celery_app import celery_app
 
@@ -78,8 +102,15 @@ def queue_dubbing_chain(job_id: str, video_s3_uri: str):
     )
 
 
+# ============================================================================
+# FINALIZER
+# ============================================================================
 @shared_task(bind=True)
 def _finalize_job(self, payload: dict, job_id: str):
+
+    # Mark final step of pipeline successful
+    set_step_success(job_id, "replace_audio")
+
     job = Job.query.get(job_id)
     if not job:
         raise Exception(f"Job {job_id} not found for finalize step")
@@ -92,6 +123,7 @@ def _finalize_job(self, payload: dict, job_id: str):
     meta = dict(job.meta or {})
     meta["output_s3_uri"] = payload.get("output_s3_uri")
     job.meta = meta
+
     db.session.commit()
 
     payload["job_id"] = job_id

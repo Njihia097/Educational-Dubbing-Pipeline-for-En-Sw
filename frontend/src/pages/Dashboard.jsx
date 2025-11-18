@@ -1,45 +1,90 @@
 // frontend/src/pages/Dashboard.jsx
 import { useContext } from 'react'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { AuthContext } from '../auth/AuthContext'
-import RoleGate from '../components/RoleGate'
 
 export default function Dashboard() {
   const { user, logout } = useContext(AuthContext)
+  const navigate = useNavigate()
+
+  const roleLabel = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : 'User'
+
+  async function handleLogout() {
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   return (
-    <div className="min-h-screen p-6">
-      <h1 className="text-3xl font-bold">
-        {user.role.charAt(0).toUpperCase() + user.role.slice(1)} Dashboard
-      </h1>
-
-      <p className="mt-2 text-slate-600">Welcome, {user.display_name || user.email}</p>
-
-      <button
-        className="mt-4 px-4 py-2 bg-red-500 text-white rounded"
-        onClick={logout}
-      >
-        Logout
-      </button>
-
-      {/* ------------------------------- */}
-      {/* Admin-Only Features             */}
-      {/* ------------------------------- */}
-      <RoleGate roles={['admin']}>
-        <div className="mt-8 p-4 bg-slate-100 rounded">
-          <h2 className="text-xl font-semibold">Admin Tools</h2>
-          <p className="text-slate-600">Only admins can see this block.</p>
+    <div className="min-h-screen flex bg-slate-50">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col">
+        <div className="px-4 py-4 border-b border-slate-200">
+          <Link to="/dashboard" className="block">
+            <div className="text-xs uppercase tracking-wide text-slate-400">
+              {roleLabel}
+            </div>
+            <div className="font-semibold text-slate-900">
+              {user?.display_name || user?.email || 'Dashboard'}
+            </div>
+          </Link>
         </div>
-      </RoleGate>
 
-      {/* ------------------------------- */}
-      {/* Creator / User Features         */}
-      {/* ------------------------------- */}
-      <RoleGate roles={['creator', 'admin']}>
-        <div className="mt-8 p-4 bg-slate-100 rounded">
-          <h2 className="text-xl font-semibold">Creator Tools</h2>
-          <p className="text-slate-600">This block is visible to creators + admins.</p>
+        <nav className="flex-1 px-2 py-4 space-y-1 text-sm">
+          <NavLink
+            to="/dashboard"
+            end
+            className={({ isActive }) =>
+              [
+                'flex items-center px-3 py-2 rounded-lg transition-colors',
+                isActive ? 'bg-sky-50 text-sky-700' : 'text-slate-700 hover:bg-slate-100',
+              ].join(' ')
+            }
+          >
+            Overview
+          </NavLink>
+
+          <NavLink
+            to="/dashboard/upload"
+            className={({ isActive }) =>
+              [
+                'flex items-center px-3 py-2 rounded-lg transition-colors',
+                isActive ? 'bg-sky-50 text-sky-700' : 'text-slate-700 hover:bg-slate-100',
+              ].join(' ')
+            }
+          >
+            Upload & Dubbing
+          </NavLink>
+
+          {/* Future: Jobs, History, Admin tools, etc. */}
+        </nav>
+
+        <div className="px-4 py-4 border-t border-slate-200">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Logout
+          </button>
         </div>
-      </RoleGate>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1">
+        <header className="h-14 border-b border-slate-200 px-6 flex items-center justify-between bg-white">
+          <h1 className="text-sm font-semibold text-slate-900">
+            {roleLabel} dashboard
+          </h1>
+          {/* Optional: global actions, filters, etc. */}
+        </header>
+
+        <section className="p-6">
+          {/* Nested route content: Overview / Upload / etc. */}
+          <Outlet />
+        </section>
+      </main>
     </div>
   )
 }
