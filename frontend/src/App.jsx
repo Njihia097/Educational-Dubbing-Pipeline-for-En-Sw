@@ -7,6 +7,9 @@ import Dashboard from './pages/Dashboard'
 import UploadPage from './pages/UploadPage'
 import JobDetail from './pages/JobDetail'
 import ProtectedRoute from './components/ProtectedRoute'
+import MyJobs from './pages/MyJobs'
+import AdminJobs from './pages/AdminJobs'
+import DashboardOverview from './pages/DashboardOverview'
 
 function App() {
   return (
@@ -17,6 +20,7 @@ function App() {
 
           <Route path="/login" element={<Login />} />
 
+          {/* Dashboard layout + nested routes */}
           <Route
             path="/dashboard"
             element={
@@ -24,26 +28,22 @@ function App() {
                 <Dashboard />
               </ProtectedRoute>
             }
-          />
+          >
+            {/* Overview */}
+            <Route index element={<DashboardOverview />} />
 
-          <Route
-            path="/dashboard/upload"
-            element={
-              <ProtectedRoute>
-                <UploadPage />
-              </ProtectedRoute>
-            }
-          />
+            {/* Creator upload flow */}
+            <Route path="upload" element={<UploadPage />} />
 
-          {/* 🔹 NEW: Job detail route */}
-          <Route
-            path="/dashboard/job/:jobId"
-            element={
-              <ProtectedRoute>
-                <JobDetail />
-              </ProtectedRoute>
-            }
-          />
+            {/* Creator: my jobs */}
+            <Route path="jobs" element={<MyJobs />} />
+
+            {/* Job detail (shared for creator/admin) */}
+            <Route path="job/:jobId" element={<JobDetail />} />
+
+            {/* Admin: all jobs */}
+            <Route path="admin/jobs" element={<AdminJobs />} />
+          </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

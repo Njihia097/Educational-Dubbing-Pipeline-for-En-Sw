@@ -2,6 +2,7 @@
 import { useContext } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { AuthContext } from '../auth/AuthContext'
+import RoleGate from '../components/RoleGate'
 
 export default function Dashboard() {
   const { user, logout } = useContext(AuthContext)
@@ -15,6 +16,9 @@ export default function Dashboard() {
     await logout()
     navigate('/login', { replace: true })
   }
+
+  const baseLinkClasses =
+    'flex items-center px-3 py-2 rounded-lg transition-colors'
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -32,32 +36,72 @@ export default function Dashboard() {
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-1 text-sm">
+          {/* Overview */}
           <NavLink
             to="/dashboard"
             end
             className={({ isActive }) =>
               [
-                'flex items-center px-3 py-2 rounded-lg transition-colors',
-                isActive ? 'bg-sky-50 text-sky-700' : 'text-slate-700 hover:bg-slate-100',
+                baseLinkClasses,
+                isActive
+                  ? 'bg-sky-50 text-sky-700'
+                  : 'text-slate-700 hover:bg-slate-100',
               ].join(' ')
             }
           >
             Overview
           </NavLink>
 
+          {/* Upload & dubbing */}
           <NavLink
             to="/dashboard/upload"
             className={({ isActive }) =>
               [
-                'flex items-center px-3 py-2 rounded-lg transition-colors',
-                isActive ? 'bg-sky-50 text-sky-700' : 'text-slate-700 hover:bg-slate-100',
+                baseLinkClasses,
+                isActive
+                  ? 'bg-sky-50 text-sky-700'
+                  : 'text-slate-700 hover:bg-slate-100',
               ].join(' ')
             }
           >
             Upload & Dubbing
           </NavLink>
 
-          {/* Future: Jobs, History, Admin tools, etc. */}
+          {/* Creator jobs */}
+          <NavLink
+            to="/dashboard/jobs"
+            className={({ isActive }) =>
+              [
+                baseLinkClasses,
+                isActive
+                  ? 'bg-sky-50 text-sky-700'
+                  : 'text-slate-700 hover:bg-slate-100',
+              ].join(' ')
+            }
+          >
+            My Jobs
+          </NavLink>
+
+          {/* Admin-only section */}
+          <RoleGate roles={['admin']}>
+            <div className="mt-4 mb-1 text-[11px] uppercase tracking-wide text-slate-400 px-3">
+              Admin
+            </div>
+
+            <NavLink
+              to="/dashboard/admin/jobs"
+              className={({ isActive }) =>
+                [
+                  baseLinkClasses,
+                  isActive
+                    ? 'bg-amber-50 text-amber-800'
+                    : 'text-slate-700 hover:bg-slate-100',
+                ].join(' ')
+              }
+            >
+              All Jobs
+            </NavLink>
+          </RoleGate>
         </nav>
 
         <div className="px-4 py-4 border-t border-slate-200">
@@ -77,11 +121,10 @@ export default function Dashboard() {
           <h1 className="text-sm font-semibold text-slate-900">
             {roleLabel} dashboard
           </h1>
-          {/* Optional: global actions, filters, etc. */}
         </header>
 
         <section className="p-6">
-          {/* Nested route content: Overview / Upload / etc. */}
+          {/* Nested route content: Overview / Upload / Jobs / Admin views */}
           <Outlet />
         </section>
       </main>

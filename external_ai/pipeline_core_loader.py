@@ -33,7 +33,7 @@ logger.info(f"📁 Using fixed pipeline root: {PIPELINE_ROOT}")
 # Import LocalDubbingPipeline from the pipeline
 try:
     
-    from src.inference.local_pipeline.core import LocalDubbingPipeline
+    from src.inference.local_pipeline.core import LocalDubbingPipeline  # pyright: ignore[reportMissingImports]
 except Exception as e:
     logger.error("❌ Failed to import LocalDubbingPipeline: %s", e)
     raise
