@@ -89,6 +89,34 @@ export default function Dashboard() {
             </div>
 
             <NavLink
+              to="/dashboard/admin/overview"
+              className={({ isActive }) =>
+                [
+                  baseLinkClasses,
+                  isActive
+                    ? 'bg-amber-50 text-amber-800'
+                    : 'text-slate-700 hover:bg-slate-100',
+                ].join(' ')
+              }
+            >
+              System Overview
+            </NavLink>
+
+            <NavLink
+              to="/dashboard/admin/monitoring"
+              className={({ isActive }) =>
+                [
+                  baseLinkClasses,
+                  isActive
+                    ? 'bg-amber-50 text-amber-800'
+                    : 'text-slate-700 hover:bg-slate-100',
+                ].join(' ')
+              }
+            >
+              Worker Monitoring
+            </NavLink>
+
+            <NavLink
               to="/dashboard/admin/jobs"
               className={({ isActive }) =>
                 [

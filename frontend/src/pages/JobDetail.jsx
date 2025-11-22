@@ -1,8 +1,10 @@
 // frontend/src/pages/JobDetail.jsx
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import useJobStatus from '../hooks/useJobStatus'
 import PipelineTracker from '../components/PipelineTracker'
+import TranscriptViewer from '../components/TranscriptViewer'
+import VideoPlayer from '../components/VideoPlayer'
 
 function parseS3Uri(s3Uri) {
   if (!s3Uri || !s3Uri.startsWith('s3://')) return null
@@ -15,6 +17,7 @@ function parseS3Uri(s3Uri) {
 
 export default function JobDetail() {
   const { jobId } = useParams()
+  const navigate = useNavigate()
   const { job, loading, error, refresh } = useJobStatus(jobId)
 
   const [originalUrl, setOriginalUrl] = useState(null)
@@ -22,6 +25,20 @@ export default function JobDetail() {
   const [urlError, setUrlError] = useState('')
   const [urlLoading, setUrlLoading] = useState(false)
   const [retrying, setRetrying] = useState(false)
+
+  // Transcripts state
+  const [transcripts, setTranscripts] = useState({
+    english: '',
+    swahili: '',
+    englishSegments: [],
+    swahiliSegments: [],
+  })
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false)
+
+  // Video playback state
+  const [currentTime, setCurrentTime] = useState(0)
+  const [hideOriginal, setHideOriginal] = useState(false)
+  const [autoScroll, setAutoScroll] = useState(true)
 
   // ------------------------------------------
   // Retry Workflow
@@ -46,7 +63,6 @@ export default function JobDetail() {
       setOriginalUrl(null)
       setDubbedUrl(null)
       setUrlError('')
-
     } catch (err) {
       console.error('Retry failed', err)
       setUrlError(err.message)
@@ -54,7 +70,6 @@ export default function JobDetail() {
       setRetrying(false)
     }
   }, [jobId, refresh])
-
 
   // ------------------------------------------
   // State badge styles
@@ -77,7 +92,7 @@ export default function JobDetail() {
   }, [job])
 
   // ------------------------------------------
-  // Fetch presigned URLs
+  // Fetch presigned URLs (original + dubbed)
   // ------------------------------------------
   useEffect(() => {
     if (!job || loading) return
@@ -95,12 +110,14 @@ export default function JobDetail() {
 
         if (parsedIn) {
           const r = await fetch(
-            `/api/jobs/presign?bucket=${encodeURIComponent(parsedIn.bucket)}&object=${encodeURIComponent(parsedIn.object)}`,
+            `/api/jobs/presign?bucket=${encodeURIComponent(
+              parsedIn.bucket
+            )}&object=${encodeURIComponent(parsedIn.object)}`,
             { credentials: 'include' }
           )
           const d = await r.json()
           if (!r.ok) throw new Error(d.error || 'Failed to presign original')
-          original = { url: d.url, jobId: job.id }
+          original = d.url
         }
 
         let dubbed = null
@@ -108,12 +125,14 @@ export default function JobDetail() {
 
         if (parsedOut) {
           const r = await fetch(
-            `/api/jobs/presign?bucket=${encodeURIComponent(parsedOut.bucket)}&object=${encodeURIComponent(parsedOut.object)}`,
+            `/api/jobs/presign?bucket=${encodeURIComponent(
+              parsedOut.bucket
+            )}&object=${encodeURIComponent(parsedOut.object)}`,
             { credentials: 'include' }
           )
           const d = await r.json()
           if (!r.ok) throw new Error(d.error || 'Failed to presign dubbed')
-          dubbed = { url: d.url, jobId: job.id }
+          dubbed = d.url
         }
 
         setOriginalUrl(original)
@@ -129,6 +148,38 @@ export default function JobDetail() {
     fetchUrls()
   }, [job, loading])
 
+  // Fetch transcripts once job is completed
+  useEffect(() => {
+    // Check for both 'succeeded' and 'completed' states
+    const isCompleted = job?.state === 'succeeded' || job?.state === 'completed'
+    if (!job || !isCompleted || transcriptsLoading) return
+    if (transcripts.englishSegments.length > 0) return // Already loaded
+
+    async function fetchTranscripts() {
+      try {
+        setTranscriptsLoading(true)
+        const res = await fetch(`/api/jobs/${job.id}/transcripts`, {
+          credentials: 'include',
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to fetch transcripts')
+
+        setTranscripts({
+          english: data.english || '',
+          swahili: data.swahili || '',
+          englishSegments: data.english_segments || [],
+          swahiliSegments: data.swahili_segments || [],
+        })
+      } catch (err) {
+        console.error('Failed to fetch transcripts', err)
+      } finally {
+        setTranscriptsLoading(false)
+      }
+    }
+
+    fetchTranscripts()
+  }, [job, transcriptsLoading, transcripts.englishSegments.length])
+
   // -----------------------
   // Loading / error states
   // -----------------------
@@ -140,17 +191,35 @@ export default function JobDetail() {
   // RENDER
   // -----------------------
   return (
-    <div className="min-h-screen px-4 py-6 bg-slate-50">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Debug logs */}
-        {console.log('Presigned original:', originalUrl?.url)}
-        {console.log('Presigned dubbed:', dubbedUrl?.url)}
-
-        {/* Header */}
+    <div className="min-h-screen bg-slate-50">
+      {/* Header with back button */}
+      <header className="bg-white border-b border-slate-200 px-6 py-4">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-slate-800">Job Details</h1>
-            <p className="text-xs text-slate-500">Job ID: {job.id}</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/dashboard/jobs')}
+              className="text-slate-600 hover:text-slate-900"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">
+                Job Details
+              </h1>
+              <p className="text-xs text-slate-500">Job ID: {job?.id || jobId}</p>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -160,99 +229,163 @@ export default function JobDetail() {
             >
               Refresh
             </button>
-
-            <Link
-              to="/jobs"
-              className="text-sm text-sky-600 hover:underline underline-offset-2"
-            >
-              ← Back to jobs
-            </Link>
           </div>
         </div>
+      </header>
 
-        {/* STATE BADGE */}
-        <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border border-slate-200 shadow-sm bg-white gap-2">
-          <span className={`px-2 py-0.5 rounded-full ${stateBadgeClass}`}>
-            {job.state}
-          </span>
+      {/* Main content */}
+      <main className="p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
 
-          {/* Retry badge */}
-          {job.retry_count > 0 && (
-            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-              retries: {job.retry_count}
+          {/* Original Video - At the top */}
+          {originalUrl && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h2 className="text-sm font-semibold text-slate-700 mb-3">
+                Original Video
+              </h2>
+              <video
+                src={originalUrl}
+                controls
+                className="w-full rounded-lg shadow bg-black"
+              />
+            </div>
+          )}
+
+          {/* STATE BADGE */}
+          <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border border-slate-200 shadow-sm bg-white gap-2">
+            <span className={`px-2 py-0.5 rounded-full ${stateBadgeClass}`}>
+              {job.state}
             </span>
+
+            {/* Retry count badge */}
+            {job.retry_count > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                retries: {job.retry_count}
+              </span>
+            )}
+          </div>
+
+          {/* ERROR MESSAGE */}
+          {job.last_error_message && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {job.last_error_message}
+            </div>
+          )}
+
+          {/* RETRY BUTTON */}
+          {job.state === 'failed' && (
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm hover:bg-amber-600 disabled:opacity-60"
+            >
+              {retrying ? 'Retrying…' : 'Retry Job'}
+            </button>
+          )}
+
+          {/* FULL CHAIN PIPELINE TRACKER */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900">
+                Pipeline Status
+              </h2>
+              {urlLoading && (
+                <span className="text-[11px] text-slate-400">
+                  Preparing video URLs…
+                </span>
+              )}
+            </div>
+
+            <PipelineTracker
+              job={job}
+              loading={loading}
+              error={error}
+              onRetry={handleRetry}
+            />
+          </div>
+
+          {/* URL error */}
+          {urlError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {urlError}
+            </div>
+          )}
+
+          {/* Maestra-style Layout: Transcripts + Dubbed Video */}
+          {(job?.state === 'succeeded' || job?.state === 'completed') && dubbedUrl ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" style={{ height: 'calc(100vh - 450px)' }}>
+              {/* Left Panel: Transcript Viewer */}
+              <div className="lg:col-span-1 border border-slate-200 rounded-lg overflow-hidden bg-white flex flex-col" style={{ height: '100%' }}>
+                <TranscriptViewer
+                  englishSegments={transcripts.englishSegments}
+                  swahiliSegments={transcripts.swahiliSegments}
+                  currentTime={currentTime}
+                  onSegmentClick={(time) => setCurrentTime(time)}
+                  hideOriginal={hideOriginal}
+                  autoScroll={autoScroll}
+                  onHideOriginalChange={setHideOriginal}
+                  onAutoScrollChange={setAutoScroll}
+                />
+              </div>
+
+              {/* Right Panel: Dubbed Video Player */}
+              <div className="lg:col-span-2 flex flex-col" style={{ height: '100%' }}>
+                <div className="bg-white border border-slate-200 rounded-lg p-4 h-full flex flex-col">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-slate-900 mb-2">
+                      Dubbed Video
+                    </h3>
+                    <p className="text-xs text-slate-600">
+                      AI-generated Swahili voiceover synchronized with the original video timeline.
+                    </p>
+                  </div>
+
+                  {urlError && (
+                    <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                      {urlError}
+                    </div>
+                  )}
+
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <VideoPlayer
+                      videoUrl={dubbedUrl}
+                      currentTime={currentTime}
+                      onTimeUpdate={setCurrentTime}
+                      onSeek={setCurrentTime}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Processing or No Output State */
+            <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+              {urlLoading || loading ? (
+                <div className="space-y-3">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600 mx-auto" />
+                  <p className="text-sm text-slate-500">
+                    Preparing video URLs…
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm text-slate-600">
+                    {job?.state === 'completed' || job?.state === 'succeeded'
+                      ? 'Loading dubbed video...'
+                      : job?.state === 'failed'
+                      ? 'Pipeline failed — no output generated.'
+                      : 'Dubbed output will appear here once the pipeline finishes.'}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Current state:{' '}
+                    <span className="font-medium">{job?.state || '—'}</span>
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
-
-        {/* ERROR MESSAGE */}
-        {job.last_error_message && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-            {job.last_error_message}
-          </div>
-        )}
-
-        {/* RETRY BUTTON */}
-        {job.state === 'failed' && (
-          <button
-            onClick={handleRetry}
-            disabled={retrying}
-            className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm hover:bg-amber-600 disabled:opacity-60"
-          >
-            {retrying ? 'Retrying…' : 'Retry Job'}
-          </button>
-        )}
-
-        {/* PIPELINE TRACKER */}
-        <PipelineTracker job={job} loading={loading} error={error} onRetry={handleRetry} />
-
-        {/* URL error */}
-        {urlError && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-            {urlError}
-          </div>
-        )}
-
-        {/* VIDEO VIEW ---- ORIGINAL & DUBBED */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Original */}
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold text-slate-700">Original Video</h2>
-
-            {!originalUrl && (
-              <p className="text-xs text-slate-500">Waiting for original video…</p>
-            )}
-
-            {originalUrl && (
-              <video
-                src={originalUrl.url}
-                controls
-                className="w-full rounded-lg shadow bg-black"
-              />
-            )}
-          </div>
-
-          {/* Dubbed */}
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold text-slate-700">Dubbed Output</h2>
-
-            {!dubbedUrl && (
-              <p className="text-xs text-slate-500">
-                {job.state === 'failed'
-                  ? 'Pipeline failed — no output generated.'
-                  : 'Output not ready yet…'}
-              </p>
-            )}
-
-            {dubbedUrl && (
-              <video
-                src={dubbedUrl.url}
-                controls
-                className="w-full rounded-lg shadow bg-black"
-              />
-            )}
-          </div>
-        </div>
-      </div>
+      </main>
     </div>
   )
 }

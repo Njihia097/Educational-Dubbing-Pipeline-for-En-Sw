@@ -29,11 +29,31 @@ function fallbackStepProgress(state) {
   }
 }
 
+/**
+ * Option A aware overall progress:
+ *  - Prefer job.progress or job.meta.progress (if backend ever sets them)
+ *  - Otherwise derive a coarse % from job.state for a single /full chain
+ *  - Only fall back to per-step averaging if job.state is missing
+ */
 function deriveOverallProgress(job, steps) {
   if (!job) return null
-  if (typeof job.progress === 'number') return job.progress
-  if (typeof job.meta?.progress === 'number') return job.meta.progress
 
+  // 1) Explicit numeric progress from backend (future proof)
+  if (typeof job.progress === 'number') {
+    return Math.round(job.progress)
+  }
+  if (typeof job.meta?.progress === 'number') {
+    return Math.round(job.meta.progress)
+  }
+
+  // 2) Full-chain coarse mapping from job.state
+  const st = (job.state || '').toLowerCase()
+  if (['queued', 'pending'].includes(st)) return 0
+  if (st === 'running') return 50
+  if (['completed', 'succeeded'].includes(st)) return 100
+  if (['failed', 'cancelled', 'error'].includes(st)) return 100
+
+  // 3) Fallback: average step progress (legacy, just in case)
   if (!steps.length) return null
 
   const values = steps.map((s) =>
@@ -45,6 +65,7 @@ function deriveOverallProgress(job, steps) {
 function resolveActiveStep(job, orderedSteps) {
   if (!job) return null
   if (job.current_step) return job.current_step
+
   const running = orderedSteps.find((s) => s.state === 'running')
   if (running) return running.name
 
@@ -60,30 +81,34 @@ export default function PipelineTracker({
   job,
   loading,
   error,
-  onRetry,    // <-- correct: no default value
+  onRetry,
 }) {
   const orderedSteps = useMemo(() => {
     if (!job || !Array.isArray(job.steps)) return []
 
+    // Map actual JobStep rows by name
     const map = new Map()
     job.steps.forEach((s) => s?.name && map.set(s.name, s))
 
-    return CANONICAL_STEPS.map((name) => map.get(name) || {
-      name,
-      state: 'pending',
-      progress: null,
-      started_at: null,
-      finished_at: null,
-    })
+    // Ensure we always render the canonical logical stages
+    return CANONICAL_STEPS.map((name) =>
+      map.get(name) || {
+        name,
+        state: 'pending',
+        progress: null,
+        started_at: null,
+        finished_at: null,
+      }
+    )
   }, [job])
 
   const overallProgress = deriveOverallProgress(job, orderedSteps)
   const activeStep = resolveActiveStep(job, orderedSteps)
 
-  const isTerminal = job &&
-    ['completed', 'succeeded', 'failed', 'cancelled'].includes(job.state)
+  const isTerminal =
+    job && ['completed', 'succeeded', 'failed', 'cancelled'].includes(job.state)
 
-  const isFailed = job && (job.state === 'failed')
+  const isFailed = job && job.state === 'failed'
 
   if (!job && loading) {
     return <p className="text-sm text-slate-500">Fetching job status…</p>
@@ -104,7 +129,9 @@ export default function PipelineTracker({
       {/* Top Header */}
       <div className="flex items-center justify-between">
         <div className="text-sm flex items-center gap-2">
-          <span className="font-medium text-slate-700">State:</span>
+          <span className="font-medium text-slate-700">
+            Full chain state:
+          </span>
           <span className="font-mono text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-800">
             {job.state}
           </span>
@@ -117,11 +144,12 @@ export default function PipelineTracker({
         </div>
 
         <div className="text-xs text-slate-500">
-          Progress: {typeof overallProgress === 'number' ? `${overallProgress}%` : '—'}
+          Full chain progress:{' '}
+          {typeof overallProgress === 'number' ? `${overallProgress}%` : '—'}
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Full-chain Progress bar */}
       {typeof overallProgress === 'number' && (
         <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
           <div
@@ -133,10 +161,13 @@ export default function PipelineTracker({
 
       {/* Terminal state summary */}
       {isTerminal && (
-        <div className={`rounded-lg border px-3 py-2 text-xs ${
-          isFailed ? 'bg-red-50 border-red-200 text-red-700'
-          : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-        }`}>
+        <div
+          className={`rounded-lg border px-3 py-2 text-xs ${
+            isFailed
+              ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
           {isFailed ? (
             <div className="flex items-center justify-between gap-2">
               <div className="flex flex-col">
@@ -159,14 +190,16 @@ export default function PipelineTracker({
               )}
             </div>
           ) : (
-            <span>Pipeline completed successfully.</span>
+            <span>Full chain completed successfully.</span>
           )}
         </div>
       )}
 
-      {/* Steps */}
+      {/* Logical steps list (visual only in Option A) */}
       <div>
-        <p className="text-xs font-medium text-slate-500 mb-1">Steps</p>
+        <p className="text-xs font-medium text-slate-500 mb-1">
+          Logical pipeline stages
+        </p>
         <ul className="space-y-1.5">
           {orderedSteps.map((step) => {
             const stepProgress =
@@ -186,12 +219,16 @@ export default function PipelineTracker({
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[11px]">{step.name}</span>
                   {isActive && (
-                    <span className="text-[10px] text-sky-700 uppercase">ACTIVE</span>
+                    <span className="text-[10px] text-sky-700 uppercase">
+                      ACTIVE
+                    </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <span className="text-[11px] text-slate-500">{step.state}</span>
+                  <span className="text-[11px] text-slate-500">
+                    {step.state}
+                  </span>
                   <div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden">
                     <div
                       className="h-full bg-sky-400"

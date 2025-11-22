@@ -3,17 +3,12 @@
 """
 High-level Celery workflow for the full dubbing chain.
 
-This orchestrates:
-  1) ASR
-  2) punctuation
-  3) MT
-  4) TTS
-  5) music separation
-  6) mix audio
-  7) replace video audio
-  8) finalize
-
-All heavy ML work is done in external_ai microservice.
+NEW (Option A):
+  - We now use a single external_ai /full call via task_full_chain.
+  - JobSteps for the classic stages (asr, punctuate, translate, tts,
+    separate_music, mix, replace_audio) are still created so the
+    dashboard remains compatible. _finalize_job marks them all as
+    succeeded once the full chain completes.
 """
 
 import datetime
@@ -23,14 +18,20 @@ from app.models.models import Job, JobStep
 from app.tasks.progress_tracker import set_step_success
 
 from .pipeline_tasks import (
-    task_asr,
-    task_punctuate,
-    task_translate,
-    task_tts,
-    task_separate_music,
-    task_mix,
-    task_replace_audio,
+    task_full_chain,  # 👈 NEW single-call task
 )
+
+
+# The logical pipeline stages we still expose to the UI
+PIPELINE_STEPS = [
+    "asr",
+    "punctuate",
+    "translate",
+    "tts",
+    "separate_music",
+    "mix",
+    "replace_audio",
+]
 
 
 # ============================================================================
@@ -40,6 +41,11 @@ from .pipeline_tasks import (
 def run_chain(self, job_id: str, video_s3_uri: str):
     """
     Launch the entire dubbing pipeline for a video.
+
+    Implementation:
+      • Create JobStep rows for all stages (for UI compatibility)
+      • Run a SINGLE Celery task (task_full_chain) that calls /full
+      • Finalize job & mark all steps as succeeded in _finalize_job
     """
 
     job = Job.query.get(job_id)
@@ -52,36 +58,19 @@ def run_chain(self, job_id: str, video_s3_uri: str):
     db.session.commit()
 
     # ----------------------------------------------------------------------
-    # Create JobStep entries that EXACTLY match the decorator names
+    # Ensure JobStep entries exist (one per pipeline logical stage)
     # ----------------------------------------------------------------------
-    pipeline_steps = [
-        "asr",
-        "punctuate",
-        "translate",
-        "tts",
-        "separate_music",
-        "mix",
-        "replace_audio",
-    ]
-
-    # Ensure steps exist only once
     existing = {s.name for s in JobStep.query.filter_by(job_id=job_id).all()}
-    for step in pipeline_steps:
+    for step in PIPELINE_STEPS:
         if step not in existing:
             db.session.add(JobStep(job_id=job_id, name=step, state="pending"))
     db.session.commit()
 
     # ----------------------------------------------------------------------
-    # Chain definition
+    # Chain definition: single full-chain task + finalizer
     # ----------------------------------------------------------------------
     workflow = chain(
-        task_asr.s(video_s3_uri),
-        task_punctuate.s(),
-        task_translate.s(),
-        task_tts.s(),
-        task_separate_music.s(),
-        task_mix.s(),
-        task_replace_audio.s(),
+        task_full_chain.s(video_s3_uri),
         _finalize_job.s(job_id),
     )
 
@@ -108,8 +97,9 @@ def queue_dubbing_chain(job_id: str, video_s3_uri: str):
 @shared_task(bind=True)
 def _finalize_job(self, payload: dict, job_id: str):
 
-    # Mark final step of pipeline successful
-    set_step_success(job_id, "replace_audio")
+    # Mark all logical pipeline steps as successful for this job
+    for step_name in PIPELINE_STEPS:
+        set_step_success(job_id, step_name)
 
     job = Job.query.get(job_id)
     if not job:
@@ -121,7 +111,18 @@ def _finalize_job(self, payload: dict, job_id: str):
     job.finished_at = datetime.datetime.utcnow()
 
     meta = dict(job.meta or {})
-    meta["output_s3_uri"] = payload.get("output_s3_uri")
+    # propagate output_s3_uri from payload
+    if payload.get("output_s3_uri"):
+        meta["output_s3_uri"] = payload.get("output_s3_uri")
+    # Store transcriptions and translations (both plain text and timestamped segments)
+    if payload.get("english"):
+        meta["english"] = payload.get("english")
+    if payload.get("swahili"):
+        meta["swahili"] = payload.get("swahili")
+    if payload.get("english_segments"):
+        meta["english_segments"] = payload.get("english_segments")
+    if payload.get("swahili_segments"):
+        meta["swahili_segments"] = payload.get("swahili_segments")
     job.meta = meta
 
     db.session.commit()

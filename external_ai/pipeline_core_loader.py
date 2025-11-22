@@ -1,17 +1,14 @@
 # external_ai/pipeline_core_loader.py
+
 import logging
-import os
 import sys
 from pathlib import Path
 
 logger = logging.getLogger("pipeline_loader")
 
-# ---------------------------------------------------------------------------
-# 🔥 FIXED: FORCE REAL WINDOWS PATH — NO WSL, NO AUTO-CHDIR
-# ---------------------------------------------------------------------------
-# Replace this path with your real pipeline path.
-# In your case it is EXACTLY here:
-# C:\Users\hp omen 16\Projects\4.2\CSII\educational_dubbing_pipeline_tr
+# -----------------------------------------------------------------------------
+# Fixed absolute pipeline root
+# -----------------------------------------------------------------------------
 PIPELINE_ROOT = Path(
     r"C:\Users\hp omen 16\Projects\4.2\CSII\educational_dubbing_pipeline_tr"
 ).resolve()
@@ -19,38 +16,36 @@ PIPELINE_ROOT = Path(
 if not PIPELINE_ROOT.exists():
     raise RuntimeError(f"Pipeline root does not exist: {PIPELINE_ROOT}")
 
-# Add pipeline repo to Python import path
+# Add root to module import path
 if str(PIPELINE_ROOT) not in sys.path:
     sys.path.insert(0, str(PIPELINE_ROOT))
 
-logger.info(f"📁 Using fixed pipeline root: {PIPELINE_ROOT}")
+logger.info(f"📁 Using pipeline root: {PIPELINE_ROOT}")
 
-# IMPORTANT:
-# ❌ Do NOT change directory
-# ❌ Do NOT call os.chdir()
-# These break Windows path resolution
-# ---------------------------------------------------------------------------
-# Import LocalDubbingPipeline from the pipeline
+# -----------------------------------------------------------------------------
+# Import LocalDubbingPipeline
+# -----------------------------------------------------------------------------
 try:
-    
-    from src.inference.local_pipeline.core import LocalDubbingPipeline  # pyright: ignore[reportMissingImports]
+    from src.inference.local_pipeline.core import LocalDubbingPipeline # pyright: ignore[reportMissingImports]
 except Exception as e:
     logger.error("❌ Failed to import LocalDubbingPipeline: %s", e)
     raise
 
-# ---------------------------------------------------------------------------
-# Singleton Loader
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Singleton loader
+# -----------------------------------------------------------------------------
 _PIPELINE = None
 
 def get_pipeline() -> "LocalDubbingPipeline":
     """
-    Return a single instance of LocalDubbingPipeline across the process.
-    Heavy models (Whisper, NLLB, MMS-TTS) will only load once.
+    Instantiate only once.
+    Heavy models (Whisper, MT, TTS) load a single time.
     """
     global _PIPELINE
+
     if _PIPELINE is None:
-        logger.info("🔥 Instantiating LocalDubbingPipeline (once only)")
+        logger.info("🔥 Initializing LocalDubbingPipeline")
         _PIPELINE = LocalDubbingPipeline()
         logger.info("✅ LocalDubbingPipeline initialized")
+
     return _PIPELINE

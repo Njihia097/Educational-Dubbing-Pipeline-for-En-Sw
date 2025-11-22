@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import uuid
 from decimal import Decimal
@@ -10,6 +11,8 @@ from flask import Blueprint, request, jsonify
 from app.database import db
 from app.models.models import AppUser, Project, Job, JobStep, JobOutput, Asset
 from app.routes.auth_routes import get_current_user, require_admin  # 🔐 RBAC helpers
+
+logger = logging.getLogger(__name__)
 
 # Lazily load heavy dependencies when needed (avoid circular imports)
 celery_app = None
@@ -458,6 +461,61 @@ def presign_download():
 
 
 # ------------------------------------------------------------------------------
+# CANCEL ENDPOINT — cancel a running job
+# ------------------------------------------------------------------------------
+@job_bp.route("/<job_id>/cancel", methods=["POST"])
+def cancel_job(job_id):
+    """
+    Cancel a job that is currently running or queued.
+    This:
+      • validates job exists and user has permission
+      • sets job state to 'cancelled'
+      • attempts to revoke the Celery task if possible
+    """
+    job = db.session.get(Job, job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    user = get_current_user()
+    is_admin = require_admin()
+
+    # Check authorization
+    if not is_admin and (not user or user.id != job.owner_id):
+        return jsonify({"error": "Not authorized to cancel this job"}), 403
+
+    # Only allow cancel from active states
+    if job.state not in ("queued", "running"):
+        return jsonify({"error": f"Job is in state '{job.state}', cannot cancel"}), 400
+
+    # Update job state
+    job.state = "cancelled"
+    job.finished_at = datetime.datetime.utcnow()
+    job.last_error_message = "Cancelled by user"
+
+    # Try to revoke Celery task if we have task_id in meta
+    meta = dict(job.meta or {})
+    task_id = meta.get("task_id")
+    
+    if task_id:
+        try:
+            from app.celery_app import celery_app
+            celery_app.control.revoke(task_id, terminate=True)
+        except Exception as e:
+            # Log but don't fail - job is already marked as cancelled
+            logger.warning(f"Failed to revoke Celery task {task_id}: {e}")
+
+    db.session.commit()
+
+    return jsonify(
+        {
+            "job_id": str(job.id),
+            "message": "Job cancelled successfully",
+            "state": job.state,
+        }
+    ), 200
+
+
+# ------------------------------------------------------------------------------
 # RETRY ENDPOINT — restart a single job
 # ------------------------------------------------------------------------------
 @job_bp.route("/<job_id>/retry", methods=["POST"])
@@ -682,5 +740,57 @@ def job_logs(job_id):
             "job": job_brief,
             "steps": steps_payload,
             "text_log": "\n".join(text_lines),
+        }
+    ), 200
+
+
+# ------------------------------------------------------------------------------
+# TRANSCRIPTS ENDPOINT — get English and Swahili transcripts with timestamps
+# ------------------------------------------------------------------------------
+@job_bp.route("/<job_id>/transcripts", methods=["GET"])
+def get_transcripts(job_id):
+    """
+    Returns English and Swahili transcripts with timestamps for a completed job.
+    
+    Returns:
+    {
+        "english": "Full English transcript text",
+        "swahili": "Full Swahili translation text",
+        "english_segments": [
+            {"text": "...", "start": 0.0, "end": 5.2},
+            ...
+        ],
+        "swahili_segments": [
+            {"text": "...", "start": 0.0, "end": 5.2},
+            ...
+        ]
+    }
+    """
+    job = db.session.get(Job, job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    user = get_current_user()
+    is_admin = require_admin()
+
+    # Only owner or admin can view transcripts
+    if not is_admin and (not user or user.id != job.owner_id):
+        return jsonify({"error": "Not authorized to view transcripts for this job"}), 403
+
+    meta = dict(job.meta or {})
+    
+    # Extract transcript data from meta
+    english = meta.get("english", "")
+    swahili = meta.get("swahili", "")
+    english_segments = meta.get("english_segments", [])
+    swahili_segments = meta.get("swahili_segments", [])
+
+    return jsonify(
+        {
+            "job_id": str(job.id),
+            "english": english,
+            "swahili": swahili,
+            "english_segments": _safe_serialize(english_segments),
+            "swahili_segments": _safe_serialize(swahili_segments),
         }
     ), 200

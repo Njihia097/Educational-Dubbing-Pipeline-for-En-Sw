@@ -10,6 +10,8 @@ import ProtectedRoute from './components/ProtectedRoute'
 import MyJobs from './pages/MyJobs'
 import AdminJobs from './pages/AdminJobs'
 import DashboardOverview from './pages/DashboardOverview'
+import SystemOverview from './pages/AdminDashboard/SystemOverview'
+import WorkerMonitoring from './pages/AdminDashboard/WorkerMonitoring'
 
 function App() {
   return (
@@ -19,6 +21,16 @@ function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
 
           <Route path="/login" element={<Login />} />
+
+          {/* Upload page - standalone full-width page */}
+          <Route
+            path="/dashboard/upload"
+            element={
+              <ProtectedRoute>
+                <UploadPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Dashboard layout + nested routes */}
           <Route
@@ -32,9 +44,6 @@ function App() {
             {/* Overview */}
             <Route index element={<DashboardOverview />} />
 
-            {/* Creator upload flow */}
-            <Route path="upload" element={<UploadPage />} />
-
             {/* Creator: my jobs */}
             <Route path="jobs" element={<MyJobs />} />
 
@@ -43,6 +52,12 @@ function App() {
 
             {/* Admin: all jobs */}
             <Route path="admin/jobs" element={<AdminJobs />} />
+
+            {/* Admin: system overview */}
+            <Route path="admin/overview" element={<SystemOverview />} />
+
+            {/* Admin: worker monitoring */}
+            <Route path="admin/monitoring" element={<WorkerMonitoring />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />

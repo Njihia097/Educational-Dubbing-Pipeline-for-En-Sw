@@ -1,6 +1,8 @@
+# backend/app/utils/minio_client.py
 import logging
 import os
 from datetime import timedelta
+from urllib.parse import urlparse
 
 from minio import Minio
 
@@ -8,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_minio_client() -> Minio:
-
     endpoint = os.getenv("S3_ENDPOINT")
     access_key = os.getenv("S3_ACCESS_KEY")
     secret_key = os.getenv("S3_SECRET_KEY")
@@ -20,14 +21,12 @@ def get_minio_client() -> Minio:
             "S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY"
         )
 
-    # Clean URL formatting to avoid accidental protocol duplication
     endpoint = endpoint.replace("http://", "").replace("https://", "").strip("/")
 
     return Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
 
 
 def ensure_bucket(bucket_name: str):
-    """Create the bucket if it doesn't exist."""
     client = get_minio_client()
     if not client.bucket_exists(bucket_name):
         logger.info("Creating MinIO bucket %s", bucket_name)
@@ -36,10 +35,8 @@ def ensure_bucket(bucket_name: str):
 
 
 def upload_file(bucket: str, object_name: str, file_path: str) -> str:
-    """Upload a file to MinIO and return an S3-style URI."""
     client = ensure_bucket(bucket)
 
-    # Detect proper content type
     from mimetypes import guess_type
     ctype = guess_type(file_path)[0] or "application/octet-stream"
 
@@ -55,28 +52,30 @@ def upload_file(bucket: str, object_name: str, file_path: str) -> str:
     return f"s3://{bucket}/{object_name}"
 
 
-
 def download_file(bucket: str, object_name: str, file_path: str) -> str:
-    """Download a file from MinIO to the given destination."""
     client = get_minio_client()
     logger.info("Downloading %s from bucket %s -> %s", object_name, bucket, file_path)
     client.fget_object(bucket, object_name, file_path)
     return file_path
 
 
-def presign_url(bucket: str, object_name: str, expires_in: int = 3600, extra_headers=None) -> str:
-    client = get_minio_client()
+def presign_url(bucket, object_name, expires_in=3600, extra_headers=None):
+    public_host = os.getenv("PUBLIC_MINIO_HOST")
+    if public_host:
+        parsed = urlparse(public_host)
+        endpoint = parsed.netloc
+        secure = parsed.scheme == "https"
+        access_key = os.getenv("S3_ACCESS_KEY")
+        secret_key = os.getenv("S3_SECRET_KEY")
+        client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
+    else:
+        client = get_minio_client()
 
-    url = client.presigned_get_object(
+    return client.presigned_get_object(
         bucket,
         object_name,
         expires=timedelta(seconds=expires_in),
         response_headers=extra_headers or {}
     )
-
-    # ❌ DO NOT rewrite the host, or the signature becomes invalid.
-    return url
-
-
 
 
