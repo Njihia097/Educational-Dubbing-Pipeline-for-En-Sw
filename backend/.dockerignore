@@ -1,0 +1,24 @@
+.git
+.gitignore
+.vscode
+.venv
+__pycache__/
+*.pyc
+
+# Big dirs/files not needed in image
+models/
+data/
+outputs/
+logs/
+cache/
+.notebooks/
+*.ipynb
+storage_data/
+venv/
+*.pyo
+.pytest_cache/
+
+# Local artifacts
+*.zip
+*.tar
+*.tar.gz

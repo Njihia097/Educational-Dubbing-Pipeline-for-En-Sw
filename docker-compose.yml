@@ -1,0 +1,141 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: edu_pg
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  minio:
+    image: minio/minio
+    container_name: edu_minio
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./storage_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7
+    container_name: edu_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+
+  backend:
+    build: ./backend
+    container_name: edu_backend
+    restart: always
+    environment:
+      - ROLE=backend
+      - PYTHONPATH=/app:/dubbing_pipeline
+      - EXTERNAL_AI_URL=${EXTERNAL_AI_URL:-http://host.docker.internal:7001}
+      - JOB_UPLOAD_TMP=/data/uploads/tmp
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - SKIP_MODEL_LOAD=True
+      # S3 / MinIO settings
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin123
+      - S3_BUCKET=edu-dubbing
+      - S3_BUCKET_UPLOADS=uploads
+      - S3_BUCKET_OUTPUTS=outputs
+      - S3_REGION=us-east-1
+      - S3_SECURE=False
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - ./backend/.env
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - ./storage/uploads:/data/uploads            # user uploads
+      - ./storage/outputs:/data/outputs
+      - ./storage:/storage
+      # ✅ match non-root cache paths from Dockerfile
+      
+
+  worker:
+    build: ./backend
+    container_name: edu_worker
+    restart: always
+    environment:
+      - ROLE=worker
+      - PYTHONPATH=/app:/dubbing_pipeline
+      - EXTERNAL_AI_URL=${EXTERNAL_AI_URL:-http://host.docker.internal:7001}
+      - JOB_UPLOAD_TMP=/data/uploads/tmp
+      - CUDA_VISIBLE_DEVICES=0
+      - CELERYD_PREFETCH_MULTIPLIER=1
+      - CELERY_ACKS_LATE=true
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      # ⬇️ For dev you can leave True; for real inference set to False
+      - SKIP_MODEL_LOAD=False
+      # S3 / MinIO settings
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin123
+      - S3_BUCKET=edu-dubbing
+      - S3_BUCKET_UPLOADS=uploads
+      - S3_BUCKET_OUTPUTS=outputs
+      - S3_REGION=us-east-1
+      - S3_SECURE=False
+    env_file:
+      - ./backend/.env
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - ./storage/uploads:/data/uploads
+      - ./storage/outputs:/data/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    gpus: all
+
+
+volumes:
+  postgres_data:
+  storage_data:
+  redis_data:
